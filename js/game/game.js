@@ -1,0 +1,1026 @@
+// ---------------------------------------------------------------------------
+// Game wiring: loop, UI, scanning, social sharing, and hidden extras.
+// ---------------------------------------------------------------------------
+"use strict";
+
+const $ = (sel) => document.querySelector(sel);
+const SAVE_KEY = "vw.city";
+const PREFS_KEY = "vw.gamePrefs";
+const VERSION = "0.2.0";
+
+const canvas = $("#cityCanvas");
+const ctx = canvas.getContext("2d");
+const viewport = new Viewport(canvas, 1.3);
+viewport.minZoom = 0.35;
+viewport.maxZoom = 8;
+
+const prefs = { extras: false, welcomed: false, ...readJSON(PREFS_KEY, {}) };
+const savePrefs = () => writeJSON(PREFS_KEY, prefs);
+
+let city = null;
+let renderer = null;
+let visit = null; // { city, renderer } while looking at someone else's town
+const online = new Online(window.VW_CONFIG);
+const ui = { placing: null, selected: null, floaters: [], cars: [], drive: null, follow: null };
+
+function readJSON(key, fallback = null) {
+  try {
+    const v = localStorage.getItem(key);
+    return v ? JSON.parse(v) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeJSON(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Pushes the town to the cloud (leaderboard card + backup). Fire and forget.
+let lastSync = 0;
+function syncOnline(force = false) {
+  if (!online.ready || !city || (!force && Date.now() - lastSync < 60000)) return;
+  lastSync = Date.now();
+  online.publish(city).catch((e) => console.warn(e));
+}
+
+function saveGame() {
+  if (!city) return;
+  city.lastSeen = Date.now();
+  if (!writeJSON(SAVE_KEY, city.toSave())) toast("⚠️ Couldn't save – storage full?");
+}
+
+const fmt = (n) => (n >= 10000 ? (n / 1000).toFixed(n >= 100000 ? 0 : 1) + "k" : String(Math.floor(n)));
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+// ---------------------------------------------------------------------------
+// Feedback: toast, modal, floating numbers, haptics
+// ---------------------------------------------------------------------------
+let toastTimer = null;
+function toast(msg, ms = 2400) {
+  const el = $("#toast");
+  el.textContent = msg;
+  el.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove("show"), ms);
+}
+
+const modalQueue = [];
+function showModal({ icon, title, body = "", button = "Nice!", onClose = null }) {
+  modalQueue.push({ icon, title, body, button, onClose });
+  if (modalQueue.length === 1) renderModal();
+}
+function renderModal() {
+  const m = modalQueue[0];
+  if (!m) return ($("#modalBackdrop").hidden = true);
+  $("#modalIcon").textContent = m.icon;
+  $("#modalTitle").textContent = m.title;
+  $("#modalBody").innerHTML = m.body;
+  $("#modalOk").textContent = m.button;
+  $("#modalBackdrop").hidden = false;
+}
+$("#modalOk").addEventListener("click", () => {
+  const m = modalQueue.shift();
+  if (m && m.onClose) m.onClose();
+  renderModal();
+});
+
+function floater(p, text, color) {
+  ui.floaters.push({ x: p.x, y: p.y, text, color, age: 0, life: 1.3 });
+}
+
+function buzz(ms = 30) {
+  if (navigator.vibrate) navigator.vibrate(ms);
+}
+
+function bump(id) {
+  const el = $(id).parentElement;
+  el.classList.add("bump");
+  setTimeout(() => el.classList.remove("bump"), 160);
+}
+
+// ---------------------------------------------------------------------------
+// Sheets
+// ---------------------------------------------------------------------------
+let sheetOnClose = null;
+function openSheet(title, html, mount = () => {}, onClose = null) {
+  $("#sheetTitle").textContent = title;
+  $("#sheetBody").innerHTML = html;
+  $("#sheet").hidden = false;
+  $("#sheetBackdrop").hidden = false;
+  sheetOnClose = onClose;
+  mount($("#sheetBody"));
+}
+function closeSheet() {
+  $("#sheet").hidden = true;
+  $("#sheetBackdrop").hidden = true;
+  ui.selected = null;
+  if (sheetOnClose) sheetOnClose();
+  sheetOnClose = null;
+}
+$("#sheetClose").addEventListener("click", closeSheet);
+$("#sheetBackdrop").addEventListener("click", closeSheet);
+
+// ---------------------------------------------------------------------------
+// Top bar
+// ---------------------------------------------------------------------------
+let lastShown = {};
+function updateTopbar() {
+  const c = visit ? visit.city : city;
+  const vals = {
+    mat: visit ? "–" : fmt(c.materials),
+    coin: visit ? "–" : fmt(c.coins),
+    pop: fmt(c.pop) + (visit ? "" : "/" + fmt(c.capacity)),
+    appeal: c.appeal.toFixed(2),
+  };
+  for (const [k, v] of Object.entries(vals)) {
+    if (lastShown[k] !== v) {
+      if (lastShown[k] !== undefined && !visit && (k === "mat" || k === "coin") && parseFloat(v) > parseFloat(lastShown[k])) bump("#" + k + "Val");
+      $("#" + k + "Val").textContent = v;
+      lastShown[k] = v;
+    }
+  }
+  $("#cityName").textContent = c.name;
+  const tier = TIERS[c.tier];
+  $("#tierBadge").textContent = tier.icon + " " + tier.name;
+
+  const bar = $("#roadBar");
+  if (visit) {
+    bar.hidden = true;
+  } else {
+    bar.hidden = false;
+    const job = city.roadJob;
+    if (job) {
+      const p = clamp(job.t / job.duration, 0, 1);
+      bar.classList.add("building");
+      bar.querySelector(".fill").style.width = p * 100 + "%";
+      bar.querySelector(".label").textContent = "🚧 Building a new road… " + Math.round(p * 100) + "%";
+    } else {
+      const cost = city.roadCost();
+      bar.classList.remove("building");
+      bar.querySelector(".fill").style.width = clamp(city.materials / cost, 0, 1) * 100 + "%";
+      bar.querySelector(".label").textContent = "🛣️ Next road: " + Math.floor(city.materials) + " / " + cost + " 🧱";
+    }
+  }
+  $("#dailyBtn .dot").hidden = !city.dailyStatus().available;
+  $("#itemsBtn .dot").hidden = !city.inventory.length;
+}
+
+// ---------------------------------------------------------------------------
+// Events from the simulation
+// ---------------------------------------------------------------------------
+function handleEvents(events) {
+  for (const e of events) {
+    if (e.type === "road") {
+      toast("🛣️ New road finished! " + e.lots + " new lots to build on");
+      buzz(40);
+      saveGame();
+    } else if (e.type === "roadStart") {
+      toast("🚧 Construction crews started a new road");
+    } else if (e.type === "tier") {
+      const t = TIERS[e.tier];
+      showModal({
+        icon: t.icon,
+        title: city.name + " is now a " + t.name + "!",
+        body: "Your population reached " + t.pop + ".<div class='gains'><span class='gain'>+" + (t.reward || 0) + " 🧱</span></div>",
+        button: "Hooray!",
+      });
+      saveGame();
+    } else if (e.type === "built" && !visit) {
+      const b = e.lot;
+      const label = b.kind === "res" ? "🏠" : b.kind === "com" ? "🏪" : SPECIALS[b.special]?.icon || "✨";
+      floater(b.center, label + " built!", "#bbf7d0");
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Tapping the map
+// ---------------------------------------------------------------------------
+function onTap(world) {
+  const active = visit || { city, renderer };
+  const vp = viewport.getViewPoint();
+  const z = viewport.zoom;
+
+  if (!visit && !ui.placing) {
+    for (const lot of city.lots) {
+      if (lot.kind !== "com" || lot.building > 0 || lot.coins < 1) continue;
+      if (distance(renderer.bubbleAnchor(lot, vp), world) < 34 * Math.max(1, z * 0.75)) return collect(lot);
+    }
+  }
+
+  const lot = active.city.lots.find((l) => l.poly.containsPoint(world));
+  if (ui.placing) {
+    if (lot && !lot.kind) {
+      city.placeSpecial(lot, ui.placing);
+      floater(lot.center, SPECIALS[ui.placing].icon + " placed!", "#fde68a");
+      buzz(40);
+      stopPlacing();
+      saveGame();
+    } else {
+      toast("Tap one of the glowing empty lots");
+    }
+    return;
+  }
+  if (!lot) {
+    ui.selected = null;
+    return;
+  }
+  if (!visit && lot.kind === "com" && lot.building <= 0 && lot.coins >= 1) return collect(lot);
+  openLotSheet(lot, !!visit);
+}
+
+function collect(lot) {
+  const got = city.collect(lot);
+  if (got) {
+    floater(renderer.bubbleAnchor(lot, viewport.getViewPoint()), "+" + got + " 💰");
+    buzz(15);
+  }
+}
+
+function openLotSheet(lot, readOnly) {
+  ui.selected = lot;
+  const c = readOnly ? visit.city : city;
+  let title, html;
+  if (lot.building > 0 && !readOnly) {
+    title = "🏗️ Under construction";
+    html = "<p>Builders are hard at work. Ready in about " + Math.ceil(lot.building) + " seconds.</p>";
+  } else if (!lot.kind) {
+    title = "🟩 Empty lot";
+    html = "<p>This land will develop by itself into homes or shops as your town needs them.</p>" +
+      (readOnly ? "" : "<p class='muted'>Got a special building? Place it here from 🎒 Items.</p>");
+  } else if (lot.kind === "special") {
+    const s = SPECIALS[lot.special];
+    title = s.icon + " " + s.name;
+    html = "<p><span class='rarity' style='color:" + RARITY_INFO[s.rarity].color + "'>" + RARITY_INFO[s.rarity].label + "</span></p>" +
+      "<p>Makes the town more appealing: <b>+" + Math.round(s.appeal * 100) + "% ✨</b> faster growth.</p>";
+  } else {
+    const lvl = lot.effectiveLevel;
+    const isRes = lot.kind === "res";
+    const names = isRes ? ["", "Cottage", "Townhouse", "Apartments"] : ["", "Corner shop", "Market", "Office tower"];
+    title = (isRes ? "🏠 " : "🏪 ") + names[lvl] + " · level " + lvl;
+    html = isRes
+      ? "<p>Home for up to <b>" + lvl * 6 + " residents</b>.</p>"
+      : "<p>Provides <b>" + lvl * 5 + " jobs</b> and earns <b>" + (lvl * 0.06 * c.appeal * 60).toFixed(1) + " 💰/min</b>.</p>";
+    if (!readOnly) {
+      if (!isRes) html += "<p>Waiting to collect: <b>" + Math.floor(lot.coins) + " 💰</b></p>";
+      const up = city.upgradeInfo(lot);
+      if (up) {
+        const why = city.pop < up.needPop ? "Needs " + up.needPop + " population" : city.coins < up.cost ? "Not enough coins" : "";
+        html += "<button id='upgradeBtn' class='gold big' " + (up.ok ? "" : "disabled") + ">⬆️ Upgrade to " + names[lvl + 1] + " · " + up.cost + " 💰</button>" +
+          (why ? "<p class='muted' style='text-align:center'>" + why + "</p>" : "");
+      } else if (lvl >= 3) {
+        html += "<p class='muted'>Fully upgraded! 🌟</p>";
+      }
+    }
+  }
+  openSheet(title, html, (body) => {
+    const btn = body.querySelector("#upgradeBtn");
+    if (btn) {
+      btn.addEventListener("click", () => {
+        if (city.upgrade(lot)) {
+          floater(lot.center, "⬆️ Upgrading!", "#fde68a");
+          buzz(40);
+          saveGame();
+          closeSheet();
+        }
+      });
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Scanning
+// ---------------------------------------------------------------------------
+const scanner = new Scanner($("#scanVideo"), (text, format) => {
+  closeScanner();
+  handleScan(text, format);
+});
+
+async function openScanner() {
+  if (visit) return toast("Head back home to scan for your own town");
+  $("#scanOverlay").hidden = false;
+  if (!Scanner.canUseLiveCamera()) {
+    $("#scanStatus").textContent = "Live camera needs a secure (https) link – take a photo of the code instead 👇";
+    return;
+  }
+  $("#scanStatus").textContent = "Point your camera at any QR code";
+  try {
+    await scanner.start();
+  } catch (e) {
+    console.warn(e);
+    $("#scanStatus").textContent = "Couldn't open the camera (" + (e.name || "error") + "). Take a photo instead 👇";
+  }
+}
+
+function closeScanner() {
+  scanner.stop();
+  $("#scanOverlay").hidden = true;
+}
+
+$("#scanBtn").addEventListener("click", openScanner);
+$("#scanCancel").addEventListener("click", closeScanner);
+$("#photoInput").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  $("#scanStatus").textContent = "Reading photo…";
+  try {
+    const found = await scanner.decodeFile(file);
+    if (!found) {
+      $("#scanStatus").textContent = "No code found in that photo – try getting closer 🔍";
+      return;
+    }
+    closeScanner();
+    handleScan(found.text, found.format);
+  } catch (err) {
+    console.warn(err);
+    $("#scanStatus").textContent = "Couldn't read that photo.";
+  }
+});
+
+function handleScan(text, format = "qr_code") {
+  if (!text || !text.trim()) return;
+  buzz([30, 40, 30]);
+  const r = Rewards.evaluate(text, format, city);
+  if (city.scanned[r.key]) {
+    showModal({
+      icon: "🔁",
+      title: "Already scanned!",
+      body: "Your town already got its reward from this " + esc(r.label.toLowerCase()) + ".<br>Go find new codes out in the world! 🔍",
+      button: "OK",
+    });
+    return;
+  }
+  city.applyReward(r);
+  saveGame();
+  let gains = "";
+  if (r.materials) gains += "<span class='gain'>+" + r.materials + " 🧱</span>";
+  if (r.coins) gains += "<span class='gain'>+" + r.coins + " 💰</span>";
+  if (r.pop) gains += "<span class='gain'>+" + r.pop + " 👥</span>";
+  let drop = "";
+  if (r.item) {
+    const s = SPECIALS[r.item];
+    const info = RARITY_INFO[r.rarity];
+    drop = "<div class='item-drop' style='border-color:" + info.color + "'><div class='emoji'>" + s.icon + "</div>" +
+      "<div class='rarity' style='color:" + info.color + "'>" + info.label + " drop!</div><b>" + s.name + "</b>" +
+      "<div class='muted'>Place it from 🎒 Items</div></div>";
+  }
+  showModal({
+    icon: r.icon,
+    title: r.label + "!",
+    body: esc(r.flavor) + "<div class='gains'>" + gains + "</div>" + drop,
+    button: r.item ? "Awesome!" : "Nice!",
+  });
+  online.recordScan(r.key, r.kind).then((n) => {
+    if (n === 1) setTimeout(() => toast("🌍 You're the first explorer ever to find this code!", 3500), 900);
+    else if (n > 1) setTimeout(() => toast("🌍 " + n + " explorers have found this code", 3000), 900);
+  }).catch(() => {});
+}
+
+// ---------------------------------------------------------------------------
+// Menus
+// ---------------------------------------------------------------------------
+$("#dailyBtn").addEventListener("click", () => {
+  if (visit) return;
+  const s = city.dailyStatus();
+  if (!s.available) {
+    return openSheet("🎁 Daily gift", "<p>You already claimed today's gift. Come back tomorrow to keep your <b>" + city.daily.streak + "-day streak</b> 🔥</p><p class='muted'>Streaks give bigger gifts, up to 7 days.</p>");
+  }
+  const got = city.claimDaily();
+  saveGame();
+  showModal({
+    icon: "🎁",
+    title: "Daily gift · day " + got.streak + (got.streak > 1 ? " 🔥" : ""),
+    body: "Thanks for checking in on " + esc(city.name) + "!<div class='gains'><span class='gain'>+" + got.materials + " 🧱</span><span class='gain'>+" + got.coins + " 💰</span></div>",
+  });
+});
+
+$("#marketBtn").addEventListener("click", () => {
+  if (visit) return;
+  const offers = [
+    { amount: 10, price: 60 },
+    { amount: 30, price: 165 },
+    { amount: 100, price: 500 },
+  ];
+  const html =
+    "<p>Trade coins for building materials. Scanning codes out in the world is much cheaper! 😉</p>" +
+    "<div class='list'>" + offers.map((o, i) =>
+      "<div class='item-row'><span class='emoji'>🧱</span><div class='grow'><b>" + o.amount + " materials</b><small>" + o.price + " 💰</small></div>" +
+      "<button data-offer='" + i + "' class='gold'>Buy</button></div>").join("") + "</div>" +
+    "<div class='card'><h3>📈 Your economy</h3><div class='stat-grid'>" +
+    "<div class='stat'><b>" + fmt(city.capacity) + "</b><span>🏠 housing</span></div>" +
+    "<div class='stat'><b>" + fmt(city.jobs) + "</b><span>💼 jobs</span></div>" +
+    "<div class='stat'><b>" + city.roadCount + "</b><span>🛣️ roads</span></div>" +
+    "<div class='stat'><b>" + city.lots.filter((l) => !l.kind).length + "</b><span>🟩 empty lots</span></div>" +
+    "</div><p class='muted'>Shops earn 💰 – tap the bubbles above them to collect. Taxes from residents trickle in automatically.</p></div>";
+  openSheet("🏪 Market", html, (body) => {
+    body.querySelectorAll("[data-offer]").forEach((b) =>
+      b.addEventListener("click", () => {
+        const o = offers[+b.dataset.offer];
+        if (city.buyMaterials(o.amount, o.price)) {
+          toast("+" + o.amount + " 🧱");
+          saveGame();
+        } else {
+          toast("Not enough coins");
+        }
+      })
+    );
+  });
+});
+
+$("#itemsBtn").addEventListener("click", () => {
+  if (visit) return;
+  const counts = {};
+  for (const id of city.inventory) counts[id] = (counts[id] || 0) + 1;
+  const ids = Object.keys(counts);
+  const empty = city.lots.filter((l) => !l.kind).length;
+  const html = ids.length
+    ? "<div class='list'>" + ids.map((id) => {
+        const s = SPECIALS[id], r = RARITY_INFO[s.rarity];
+        return "<div class='item-row'><span class='emoji'>" + s.icon + "</span><div class='grow'><b>" + s.name + (counts[id] > 1 ? " ×" + counts[id] : "") + "</b>" +
+          "<small><span class='rarity' style='color:" + r.color + "'>" + r.label + "</span> · +" + Math.round(s.appeal * 100) + "% ✨</small></div>" +
+          "<button data-place='" + id + "' class='primary' " + (empty ? "" : "disabled") + ">Place</button></div>";
+      }).join("") + "</div>" + (empty ? "" : "<p class='muted'>No empty lots right now – wait for a new road.</p>")
+    : "<p>No special buildings yet.</p><p class='muted'>Scanning codes sometimes drops parks, schools, towers and more. Rarer codes, rarer drops! 🍀</p>";
+  openSheet("🎒 Items", html, (body) => {
+    body.querySelectorAll("[data-place]").forEach((b) => b.addEventListener("click", () => startPlacing(b.dataset.place)));
+  });
+});
+
+function startPlacing(id) {
+  closeSheet();
+  ui.placing = id;
+  $("#placeText").textContent = "Tap an empty lot for your " + SPECIALS[id].icon + " " + SPECIALS[id].name;
+  $("#placeBanner").hidden = false;
+}
+function stopPlacing() {
+  ui.placing = null;
+  $("#placeBanner").hidden = true;
+}
+$("#placeCancel").addEventListener("click", stopPlacing);
+
+// ---------------------------------------------------------------------------
+// Social: share your town as a link, visit other towns
+// ---------------------------------------------------------------------------
+function shareLink() {
+  const base = location.href.split("#")[0];
+  return base + "#visit=" + city.toShareCode();
+}
+
+$("#socialBtn").addEventListener("click", () => openSocial());
+
+function townStatsCard() {
+  const age = Math.max(1, Math.round((Date.now() - city.createdAt) / 86400000));
+  return "<div class='card'><h3>" + TIERS[city.tier].icon + " " + esc(city.name) +
+    (online.handle ? " <span class='muted'>@" + esc(online.handle) + "</span>" : "") + "</h3><div class='stat-grid'>" +
+    "<div class='stat'><b>" + fmt(city.pop) + "</b><span>👥 people</span></div>" +
+    "<div class='stat'><b>" + city.stats.scans + "</b><span>📷 codes scanned</span></div>" +
+    "<div class='stat'><b>" + city.roadCount + "</b><span>🛣️ roads</span></div>" +
+    "<div class='stat'><b>" + age + "</b><span>📅 days old</span></div></div>" +
+    "<p class='muted' id='rankLine'>Seed #" + city.seed + " – no other town in the world has these roads.</p></div>";
+}
+
+function townRows(towns, { rankFrom = 1, removable = false } = {}) {
+  if (!towns.length) return "<p class='muted' style='text-align:center'>Nobody here yet.</p>";
+  return "<div class='list'>" + towns.map((t, i) => {
+    const me = online.user && t.id === online.user.id;
+    return "<div class='item-row town-row" + (me ? " me" : "") + "'>" +
+      "<div class='rank'>" + (rankFrom ? "#" + (rankFrom + i) : TIERS[t.tier] ? TIERS[t.tier].icon : "🏘️") + "</div>" +
+      "<div class='grow'><b>" + esc(t.city_name || "Unnamed") + "</b><small>@" + esc(t.handle) + " · " + fmt(t.pop) + " 👥 · " + t.roads + " 🛣️</small></div>" +
+      (me ? "<span class='muted'>you</span>" : "<button class='small' data-visit='" + esc(t.handle) + "'>👀</button>") +
+      (removable ? "<button class='small ghost' data-unfollow='" + esc(t.id) + "' aria-label='Remove friend'>✕</button>" : "") +
+      "</div>";
+  }).join("") + "</div>";
+}
+
+function openSocial(tab = "top") {
+  if (visit) return;
+  let html = townStatsCard() + "<div class='btn-col'><button id='shareBtn' class='primary big'>📤 Share my town</button></div>";
+  if (!online.enabled) {
+    html += visitByLinkCard() + "<p class='muted' style='text-align:center'>🏆 Leaderboards &amp; friends turn on once the game is online.</p>";
+  } else if (!online.ready) {
+    html += "<p class='muted' style='text-align:center'>📡 Can't reach the server right now – leaderboards will be back when you're online.</p>" + visitByLinkCard();
+  } else if (!online.handle) {
+    const suggestion = city.name.toLowerCase().replace(/[^a-z0-9_]/g, "").slice(0, 16);
+    html += "<div class='card'><h3>🏷️ Pick a username</h3><p class='muted'>Join the leaderboard and let friends find your town.</p>" +
+      "<div class='row'><input type='text' id='handleInput' class='grow' maxlength='17' autocapitalize='off' autocomplete='off' spellcheck='false' placeholder='" + esc(suggestion) + "' />" +
+      "<button id='handleGo' class='primary'>Join</button></div><p class='muted' id='handleMsg'></p></div>" + visitByLinkCard();
+  } else {
+    html += "<div class='tabs'><button data-tab='top' class='" + (tab === "top" ? "on" : "") + "'>🏆 Top towns</button>" +
+      "<button data-tab='friends' class='" + (tab === "friends" ? "on" : "") + "'>👫 Friends</button></div>" +
+      "<div id='tabBody'><p class='muted' style='text-align:center'>Loading…</p></div>" + visitByLinkCard();
+  }
+  if (online.ready) html += accountCard();
+
+  openSheet("🌐 Social", html, (body) => {
+    body.querySelector("#shareBtn").addEventListener("click", shareTown);
+    const go = body.querySelector("#visitGo");
+    if (go) go.addEventListener("click", () => {
+      const v = body.querySelector("#visitInput").value.trim();
+      if (!v) return;
+      if (v.includes("town=")) return visitHandle(v.split("town=")[1]).then((ok) => ok && closeSheet());
+      if (v.includes("visit=") || v.length > 40) {
+        if (startVisit(v.includes("visit=") ? v.split("visit=")[1] : v)) closeSheet();
+        return;
+      }
+      visitHandle(v).then((ok) => ok && closeSheet());
+    });
+    body.addEventListener("click", (e) => {
+      const b = e.target.closest("[data-visit],[data-unfollow],[data-tab]");
+      if (!b) return;
+      if (b.dataset.tab) return openSocial(b.dataset.tab);
+      if (b.dataset.visit) return visitHandle(b.dataset.visit).then((ok) => ok && closeSheet());
+      online.unfollow(b.dataset.unfollow).then(() => openSocial("friends"));
+    });
+    const claim = body.querySelector("#handleGo");
+    if (claim) claim.addEventListener("click", async () => {
+      const input = body.querySelector("#handleInput");
+      claim.disabled = true;
+      const err = await online.claimHandle(input.value || input.placeholder, city);
+      claim.disabled = false;
+      if (err) body.querySelector("#handleMsg").textContent = err;
+      else {
+        toast("🎉 Welcome, @" + online.handle + "!");
+        openSocial();
+      }
+    });
+    if (online.handle) fillTab(body, tab);
+    mountAccount(body);
+  });
+}
+
+function visitByLinkCard() {
+  return "<div class='card'><h3>👀 Visit a town</h3><p class='muted'>Type a username or paste a town link.</p>" +
+    "<div class='row'><input type='text' id='visitInput' class='grow' autocapitalize='off' autocomplete='off' spellcheck='false' placeholder='@username or link' />" +
+    "<button id='visitGo'>Go</button></div></div>";
+}
+
+async function fillTab(body, tab) {
+  const el = body.querySelector("#tabBody");
+  try {
+    if (tab === "top") {
+      const [towns, rank] = await Promise.all([online.leaderboard(), online.myRank(city.pop)]);
+      if (rank) body.querySelector("#rankLine").textContent = "🏆 #" + rank + " in the world · seed #" + city.seed;
+      el.innerHTML = townRows(towns);
+    } else {
+      const towns = await online.friends();
+      el.innerHTML =
+        "<div class='row'><input type='text' id='followInput' class='grow' autocapitalize='off' autocomplete='off' spellcheck='false' placeholder='Add a friend by @username' />" +
+        "<button id='followGo' class='primary'>Add</button></div>" + townRows(towns, { rankFrom: 0, removable: true });
+      el.querySelector("#followGo").addEventListener("click", async () => {
+        const err = await online.follow(el.querySelector("#followInput").value);
+        if (err) toast(err);
+        else {
+          toast("👫 Friend added!");
+          openSocial("friends");
+        }
+      });
+    }
+  } catch (e) {
+    console.warn(e);
+    el.innerHTML = "<p class='muted' style='text-align:center'>📡 Couldn't load that right now.</p>";
+  }
+}
+
+function accountCard() {
+  if (online.email) {
+    return "<div class='card'><h3>☁️ Cloud save on</h3><p class='muted'>Signed in as " + esc(online.email) + ". Your town is backed up and you can open it on any phone.</p>" +
+      "<div class='btn-col'><button id='signOutBtn' class='ghost'>Sign out</button></div></div>";
+  }
+  if (online.pendingEmail) {
+    return "<div class='card'><h3>📬 Check your email</h3><p class='muted'>Tap the link we sent to " + esc(online.pendingEmail) + " to finish protecting your town.</p>" +
+      "<div class='btn-col'><button id='linkEmailBtn' class='ghost'>Use a different email</button><button id='signInBtn' class='ghost'>I already have a town on another phone</button></div></div>";
+  }
+  return "<div class='card'><h3>☁️ Protect your town</h3><p class='muted'>Add your email so you never lose your town if you lose or change your phone.</p>" +
+    "<div class='btn-col'><button id='linkEmailBtn'>✉️ Add my email</button><button id='signInBtn' class='ghost'>I already have a town on another phone</button></div></div>";
+}
+
+function mountAccount(body) {
+  const on = (id, fn) => {
+    const b = body.querySelector(id);
+    if (b) b.addEventListener("click", fn);
+  };
+  on("#linkEmailBtn", async () => {
+    const email = (prompt("Your email address:") || "").trim();
+    if (!email) return;
+    syncOnline(true);
+    const err = await online.linkEmail(email);
+    if (err) return toast("⚠️ " + err);
+    showModal({ icon: "📬", title: "Check your email", body: "Tap the link we sent to <b>" + esc(email) + "</b> to finish. Until then, keep playing as normal.", button: "OK" });
+    closeSheet();
+  });
+  on("#signInBtn", async () => {
+    const email = (prompt("The email you used on your other phone:") || "").trim();
+    if (!email) return;
+    const err = await online.sendLoginCode(email);
+    if (err) return toast("⚠️ " + err);
+    const code = (prompt("Check your email and tap the Sign in link on this phone.\n\nIf the email shows a 6-digit code instead, type it here:") || "").trim();
+    if (!code) return closeSheet();
+    const bad = await online.verifyLoginCode(email, code);
+    if (bad) return toast("⚠️ " + bad);
+    closeSheet();
+    await offerCloudTown(true);
+  });
+  on("#signOutBtn", async () => {
+    if (!confirm("Sign out? Your town stays on this phone, but it won't back up until you sign in again.")) return;
+    await online.signOut();
+    closeSheet();
+    toast("Signed out");
+  });
+}
+
+async function shareTown() {
+  const url = online.handle ? location.href.split("#")[0] + "#town=" + online.handle : shareLink();
+  const text = "Come visit my town " + city.name + " – population " + Math.floor(city.pop) + "! 🏙️";
+  syncOnline(true);
+  try {
+    if (navigator.share) await navigator.share({ title: city.name, text, url });
+    else {
+      await navigator.clipboard.writeText(url);
+      toast("🔗 Link copied!");
+    }
+  } catch (e) {
+    if (e.name !== "AbortError") prompt("Copy your town link:", url);
+  }
+}
+
+async function visitHandle(handle) {
+  if (!online.ready) {
+    toast("📡 You need to be online to visit by username");
+    return false;
+  }
+  const town = await online.townByHandle(decodeURIComponent(handle));
+  if (!town) {
+    toast("🤷 Couldn't find @" + Online.normalizeHandle(decodeURIComponent(handle)));
+    return false;
+  }
+  return startVisit(town.share_code);
+}
+
+// After signing in, load the account's cloud town if it differs from this phone's.
+async function offerCloudTown(ask) {
+  const remote = await online.cloudSave().catch(() => null);
+  if (!remote || !remote.data) {
+    syncOnline(true);
+    return;
+  }
+  const r = remote.data;
+  const sameTown = r.createdAt === city.createdAt && r.seed === city.seed;
+  if (sameTown && (r.lastSeen || 0) <= (city.lastSeen || 0)) return;
+  if (!sameTown && ask && !confirm("Load " + (r.name || "your town") + " (" + remote.pop + " people) from the cloud? The town on this phone (" + city.name + ") will be replaced.")) {
+    syncOnline(true);
+    return;
+  }
+  if (!sameTown && !ask) {
+    // A different town arrived without the player asking (e.g. a magic link): keep both safe and ask.
+    if (!confirm("Your account has the town " + (r.name || "") + " (" + remote.pop + " people). Load it instead of " + city.name + "?")) return;
+  }
+  try {
+    city = City.fromSave(r);
+    renderer = new CityRenderer(city);
+    ui.cars = [];
+    saveGame();
+    catchUp();
+    viewport.lookAt(city.center());
+    toast("☁️ Loaded " + city.name);
+  } catch (e) {
+    console.warn(e);
+    toast("⚠️ Couldn't load the cloud town");
+  }
+}
+
+function startVisit(code) {
+  try {
+    const other = City.fromShareCode(decodeURIComponent(code));
+    visit = { city: other, renderer: new CityRenderer(other) };
+    ui.cars = [];
+    stopPlacing();
+    $("#visitName").textContent = other.name;
+    $("#visitBanner").hidden = false;
+    lastShown = {};
+    viewport.fitBounds(other.layout.bounds(), 1.1);
+    toast("Welcome to " + other.name + "! 👋");
+    return true;
+  } catch (e) {
+    console.warn(e);
+    toast("⚠️ That town link doesn't look right");
+    return false;
+  }
+}
+
+function endVisit() {
+  visit = null;
+  ui.cars = [];
+  $("#visitBanner").hidden = true;
+  lastShown = {};
+  if (/^#(visit|town)=/.test(location.hash)) history.replaceState(null, "", location.pathname + location.search);
+  viewport.lookAt(city.center());
+}
+$("#visitBack").addEventListener("click", endVisit);
+
+// ---------------------------------------------------------------------------
+// Settings + hidden extras (tap the version number 5 times)
+// ---------------------------------------------------------------------------
+$("#cityName").addEventListener("click", () => {
+  if (visit) return;
+  const name = prompt("Rename your town:", city.name);
+  if (name && name.trim()) {
+    city.name = name.trim().slice(0, 24);
+    saveGame();
+  }
+});
+
+let versionTaps = 0;
+$("#settingsBtn").addEventListener("click", openSettings);
+function openSettings() {
+  const extras = prefs.extras
+    ? "<div class='card extras'><h3>🧪 Extras</h3><div class='btn-col'>" +
+      "<button id='xDrive'>🚗 Drive around your town</button>" +
+      "<button id='xScan'>⌨️ Type a code (simulate a scan)</button>" +
+      "<button id='xFast'>⏩ Fast-forward 10 minutes</button>" +
+      "<button id='xSandbox'>🔧 Open the sandbox editor</button>" +
+      "<button id='xTrain'>🧠 Train self-driving cars</button>" +
+      "</div></div>"
+    : "";
+  const html =
+    "<div class='btn-col'>" +
+    "<button id='sRename'>✏️ Rename town</button>" +
+    "<button id='sExport'>💾 Back up my town</button>" +
+    "<button id='sImport'>📂 Restore from backup</button>" +
+    "<button id='sHelp'>❔ How to play</button>" +
+    "<button id='sReset' style='color:#fca5a5'>🗑️ Start a brand new town</button>" +
+    "</div>" + extras +
+    "<div class='version' id='versionLabel'>Virtual World v" + VERSION + "</div>";
+  openSheet("⚙️ Settings", html, (body) => {
+    body.querySelector("#sRename").addEventListener("click", () => $("#cityName").click());
+    body.querySelector("#sHelp").addEventListener("click", () => {
+      closeSheet();
+      showWelcome(false);
+    });
+    body.querySelector("#sExport").addEventListener("click", async () => {
+      const data = JSON.stringify(city.toSave());
+      try {
+        await navigator.clipboard.writeText(data);
+        toast("📋 Backup copied – paste it somewhere safe");
+      } catch {
+        prompt("Copy this backup:", data);
+      }
+    });
+    body.querySelector("#sImport").addEventListener("click", () => {
+      const data = prompt("Paste your backup:");
+      if (!data) return;
+      try {
+        city = City.fromSave(JSON.parse(data));
+        renderer = new CityRenderer(city);
+        ui.cars = [];
+        saveGame();
+        syncOnline(true);
+        closeSheet();
+        viewport.lookAt(city.center());
+        toast("✅ Town restored");
+      } catch {
+        toast("⚠️ That backup didn't work");
+      }
+    });
+    body.querySelector("#sReset").addEventListener("click", () => {
+      if (!confirm("Start over with a brand new town? Your current town will be gone forever.")) return;
+      if (!confirm("Really? This can't be undone.")) return;
+      city = City.create();
+      renderer = new CityRenderer(city);
+      ui.cars = [];
+      saveGame();
+      syncOnline(true);
+      closeSheet();
+      viewport.zoom = 1.3;
+      viewport.lookAt(city.center());
+      showWelcome(true);
+    });
+    body.querySelector("#versionLabel").addEventListener("click", () => {
+      if (prefs.extras) return;
+      versionTaps++;
+      if (versionTaps >= 5) {
+        prefs.extras = true;
+        savePrefs();
+        toast("🧪 Extras unlocked!");
+        openSettings();
+      } else if (versionTaps >= 2) {
+        toast(5 - versionTaps + " more…", 700);
+      }
+    });
+    if (prefs.extras) {
+      body.querySelector("#xDrive").addEventListener("click", () => {
+        closeSheet();
+        startDriving();
+      });
+      body.querySelector("#xScan").addEventListener("click", () => {
+        const t = prompt("Type or paste any code text (a URL, WIFI:…, a barcode number…):");
+        if (t) {
+          closeSheet();
+          handleScan(t, /^\d{8,13}$/.test(t.trim()) ? "ean_13" : "qr_code");
+        }
+      });
+      body.querySelector("#xFast").addEventListener("click", () => {
+        const s = city.simulate(600);
+        saveGame();
+        toast("⏩ +" + s.pop + " 👥, +" + s.coins + " 💰, +" + s.roads + " 🛣️");
+      });
+      body.querySelector("#xSandbox").addEventListener("click", () => (location.href = "sandbox.html"));
+      body.querySelector("#xTrain").addEventListener("click", () => (location.href = "sandbox.html#train"));
+    }
+  });
+}
+
+function showWelcome(fresh) {
+  showModal({
+    icon: "🏕️",
+    title: fresh ? "Welcome to " + city.name + "!" : "How to play",
+    body:
+      "<p>Your town is tiny: one road in the middle of nowhere. Help it grow!</p>" +
+      "<p style='text-align:left'>📷 <b>Scan QR codes</b> anywhere you see them – menus, posters, parking meters, packaging. Every new code feeds your town.<br>" +
+      "🛣️ <b>Materials build roads</b> automatically.<br>" +
+      "🏠 <b>New roads bring homes and shops</b>, which bring people.<br>" +
+      "💰 <b>Tap coin bubbles</b> on shops to collect.<br>" +
+      "🎁 Claim your <b>daily gift</b> to keep a streak.</p>" +
+      "<p class='muted'>No two towns are alike – yours was grown from seed #" + city.seed + ".</p>",
+    button: fresh ? "Let's grow!" : "Got it",
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Hidden extra: drive around your own town
+// ---------------------------------------------------------------------------
+function startDriving() {
+  const seg = city.layout.graph.segments[0];
+  const dir = seg.directionVector();
+  const p = add(average(seg.p1, seg.p2), scale(perpendicular(dir), ROAD_W / 4));
+  const car = new Car(p.x, p.y, 30, 50, "KEYS", headingFromDir(dir), 4, "#2563eb");
+  ui.drive = car;
+  viewport.zoom = 1.1;
+  $("#dpad").hidden = false;
+  document.body.classList.add("driving");
+  toast("🚗 Drive with the arrows (or WASD)");
+}
+
+function stopDriving() {
+  if (!ui.drive) return;
+  ui.drive.dispose();
+  ui.drive = null;
+  $("#dpad").hidden = true;
+  document.body.classList.remove("driving");
+}
+$("#driveExit").addEventListener("click", stopDriving);
+document.querySelectorAll("#dpad [data-ctl]").forEach((b) => {
+  const set = (v) => (e) => {
+    e.preventDefault();
+    if (ui.drive) ui.drive.controls[b.dataset.ctl] = v;
+  };
+  b.addEventListener("pointerdown", set(true));
+  b.addEventListener("pointerup", set(false));
+  b.addEventListener("pointerleave", set(false));
+  b.addEventListener("pointercancel", set(false));
+});
+
+// ---------------------------------------------------------------------------
+// Ambient traffic: more people, more cars
+// ---------------------------------------------------------------------------
+function updateTraffic(active) {
+  const want = Math.min(30, Math.floor(active.city.pop / 6));
+  const world = { graph: active.city.layout.graph, roadWidth: ROAD_W, markings: [] };
+  while (ui.cars.length > want) ui.cars.pop();
+  while (ui.cars.length < want) ui.cars.push(new TrafficCar(world));
+  const everyone = ui.drive ? [...ui.cars, ui.drive] : ui.cars;
+  for (const car of ui.cars) car.update(everyone);
+}
+
+// ---------------------------------------------------------------------------
+// Main loop
+// ---------------------------------------------------------------------------
+const touch = new TouchCamera(viewport, { onTap });
+window.addEventListener("resize", () => viewport.resize());
+
+let last = performance.now();
+let saveTimer = 0;
+let barTimer = 0;
+function loop(now) {
+  const dt = Math.min(0.25, (now - last) / 1000);
+  last = now;
+
+  handleEvents(city.tick(dt));
+  const active = visit || { city, renderer };
+  updateTraffic(active);
+
+  if (ui.drive) {
+    ui.drive.update(renderer.borders, ui.cars);
+    if (ui.drive.damaged) {
+      ui.drive.crashTime = (ui.drive.crashTime || 0) + dt;
+      if (ui.drive.crashTime > 1.5) {
+        stopDriving();
+        startDriving();
+      }
+    }
+    viewport.offset = lerp2D(viewport.offset, scale(ui.drive, -1), 0.12);
+  }
+
+  for (const f of ui.floaters) f.age += dt;
+  ui.floaters = ui.floaters.filter((f) => f.age < f.life);
+
+  viewport.reset("#3f8f3a");
+  active.renderer.draw(ctx, viewport, {
+    placing: !!ui.placing,
+    selected: ui.selected,
+    cars: ui.cars,
+    player: ui.drive,
+    floaters: ui.floaters,
+    now,
+  });
+
+  if ((barTimer += dt) > 0.2) {
+    barTimer = 0;
+    updateTopbar();
+  }
+  if ((saveTimer += dt) > 10) {
+    saveTimer = 0;
+    saveGame();
+    if (now - lastSync > 120000) syncOnline();
+  }
+  requestAnimationFrame(loop);
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    saveGame();
+    syncOnline();
+  } else catchUp();
+});
+window.addEventListener("pagehide", saveGame);
+
+// Progress made while the app was closed (up to 12 hours).
+function catchUp() {
+  const away = (Date.now() - city.lastSeen) / 1000;
+  if (away < 60) return;
+  const s = city.simulate(Math.min(away, 12 * 3600));
+  city.lastSeen = Date.now();
+  saveGame();
+  if (s.pop > 0 || s.roads > 0 || s.built > 0) {
+    const hours = away / 3600;
+    showModal({
+      icon: "🌙",
+      title: "While you were away…",
+      body: "It's been " + (hours >= 1 ? Math.floor(hours) + "h " : "") + Math.floor((away % 3600) / 60) + "m." +
+        "<div class='gains'>" + (s.pop ? "<span class='gain'>+" + s.pop + " 👥</span>" : "") +
+        (s.built ? "<span class='gain'>+" + s.built + " 🏠</span>" : "") +
+        (s.roads ? "<span class='gain'>+" + s.roads + " 🛣️</span>" : "") +
+        (s.coins ? "<span class='gain'>+" + s.coins + " 💰</span>" : "") + "</div>",
+      button: "Welcome back!",
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Boot
+// ---------------------------------------------------------------------------
+(function boot() {
+  const saved = readJSON(SAVE_KEY, null);
+  if (saved) {
+    try {
+      city = City.fromSave(saved);
+    } catch (e) {
+      console.error("Save unreadable", e);
+    }
+  }
+  const fresh = !city;
+  if (fresh) city = City.create();
+  renderer = new CityRenderer(city);
+  viewport.lookAt(city.center());
+  if (fresh) {
+    saveGame();
+    showWelcome(true);
+  } else {
+    catchUp();
+  }
+  const m = location.hash.match(/^#visit=(.+)$/);
+  if (m) startVisit(m[1]);
+  updateTopbar();
+
+  online.onChange = (event) => {
+    if (event === "SIGNED_IN") offerCloudTown(false);
+    if (event === "USER_UPDATED" && online.email) toast("☁️ Your town is protected");
+  };
+  online.start().then((ok) => {
+    if (!ok) return;
+    const t = location.hash.match(/^#town=([^&]+)/);
+    if (t) visitHandle(t[1]).then((found) => found || history.replaceState(null, "", location.pathname + location.search));
+    offerCloudTown(false);
+  });
+  requestAnimationFrame(loop);
+
+  if ("serviceWorker" in navigator && location.protocol === "https:") {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  }
+})();

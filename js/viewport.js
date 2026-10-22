@@ -1,0 +1,148 @@
+// Pan & zoom. `zoom` is "world units per screen pixel" (bigger = further out).
+//   wheel / pinch          zoom around the cursor
+//   middle-drag            pan
+//   Space + left-drag      pan (trackpad friendly)
+class Viewport {
+  constructor(canvas, zoom = 1, offset = null) {
+    this.canvas = canvas;
+    this.ctx = canvas.getContext("2d");
+    this.zoom = zoom;
+    this.minZoom = 0.15;
+    this.maxZoom = 120;
+    this.center = new Point(0, 0);
+    this.resize();
+    this.offset = offset ? offset : new Point(0, 0);
+    this.drag = {
+      start: new Point(0, 0),
+      end: new Point(0, 0),
+      offset: new Point(0, 0),
+      active: false,
+    };
+    this.spaceDown = false;
+    this.onUserPan = () => {};
+    this.#addEventListeners();
+  }
+
+  resize() {
+    const dpr = Math.min(2, window.devicePixelRatio || 1); // cap for phone performance
+    const w = this.canvas.clientWidth, h = this.canvas.clientHeight;
+    this.canvas.width = Math.round(w * dpr);
+    this.canvas.height = Math.round(h * dpr);
+    this.dpr = dpr;
+    this.width = w;
+    this.height = h;
+    this.center = new Point(w / 2, h / 2);
+  }
+
+  reset(background = "#2a5") {
+    const ctx = this.ctx;
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    ctx.fillStyle = background;
+    ctx.fillRect(0, 0, this.width, this.height);
+    ctx.translate(this.center.x, this.center.y);
+    ctx.scale(1 / this.zoom, 1 / this.zoom);
+    const offset = this.getOffset();
+    ctx.translate(offset.x, offset.y);
+  }
+
+  getMouse(evt, subtractDragOffset = false) {
+    const p = new Point(
+      (evt.offsetX - this.center.x) * this.zoom - this.offset.x,
+      (evt.offsetY - this.center.y) * this.zoom - this.offset.y
+    );
+    return subtractDragOffset ? subtract(p, this.drag.offset) : p;
+  }
+
+  getOffset() {
+    return add(this.offset, this.drag.offset);
+  }
+
+  // World point at the centre of the screen.
+  getViewPoint() {
+    return scale(this.getOffset(), -1);
+  }
+
+  getVisibleBounds() {
+    const off = this.getOffset();
+    return {
+      minX: -this.center.x * this.zoom - off.x,
+      minY: -this.center.y * this.zoom - off.y,
+      maxX: this.center.x * this.zoom - off.x,
+      maxY: this.center.y * this.zoom - off.y,
+    };
+  }
+
+  lookAt(point) {
+    this.offset = scale(point, -1);
+  }
+
+  fitBounds(b, padding = 1.15) {
+    const w = Math.max(200, b.maxX - b.minX);
+    const h = Math.max(200, b.maxY - b.minY);
+    this.zoom = clamp(Math.max(w / this.width, h / this.height) * padding, this.minZoom, this.maxZoom);
+    this.offset = new Point(-(b.minX + b.maxX) / 2, -(b.minY + b.maxY) / 2);
+  }
+
+  isPanGesture(evt) {
+    return evt.button == 1 || (evt.button == 0 && this.spaceDown) || this.drag.active;
+  }
+
+  #addEventListeners() {
+    this.canvas.addEventListener("wheel", this.#handleWheel.bind(this), { passive: false });
+    this.canvas.addEventListener("mousedown", this.#handleMouseDown.bind(this));
+    this.canvas.addEventListener("mousemove", this.#handleMouseMove.bind(this));
+    window.addEventListener("mouseup", this.#handleMouseUp.bind(this));
+    window.addEventListener("keydown", (e) => {
+      if (e.code === "Space" && !isTyping(e)) {
+        this.spaceDown = true;
+        this.canvas.style.cursor = "grab";
+        e.preventDefault();
+      }
+    });
+    window.addEventListener("keyup", (e) => {
+      if (e.code === "Space") {
+        this.spaceDown = false;
+        this.canvas.style.cursor = "";
+      }
+    });
+  }
+
+  #handleWheel(evt) {
+    evt.preventDefault();
+    const before = this.getMouse(evt);
+    const delta = clamp(evt.deltaY, -120, 120) * (evt.ctrlKey ? 4 : 1);
+    this.zoom = clamp(this.zoom * Math.exp(delta * 0.0015), this.minZoom, this.maxZoom);
+    const after = this.getMouse(evt);
+    this.offset = add(this.offset, subtract(after, before));
+  }
+
+  #handleMouseDown(evt) {
+    if (evt.button == 1 || (evt.button == 0 && this.spaceDown)) {
+      evt.preventDefault();
+      this.drag.start = this.getMouse(evt);
+      this.drag.active = true;
+      this.canvas.style.cursor = "grabbing";
+      this.onUserPan();
+    }
+  }
+
+  #handleMouseMove(evt) {
+    if (this.drag.active) {
+      this.drag.end = this.getMouse(evt);
+      this.drag.offset = subtract(this.drag.end, this.drag.start);
+    }
+  }
+
+  #handleMouseUp() {
+    if (this.drag.active) {
+      this.offset = add(this.offset, this.drag.offset);
+      this.drag = {
+        start: new Point(0, 0),
+        end: new Point(0, 0),
+        offset: new Point(0, 0),
+        active: false,
+      };
+      this.canvas.style.cursor = this.spaceDown ? "grab" : "";
+    }
+  }
+}

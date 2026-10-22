@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+  <meta name="theme-color" content="#0f172a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>Virtual World</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <link rel="stylesheet" href="css/game.css" />
+</head>
+<body>
+  <canvas id="cityCanvas"></canvas>
+
+  <header id="topbar">
+    <div class="title-row">
+      <button id="cityName" class="city-name" title="Rename"></button>
+      <span id="tierBadge" class="tier"></span>
+      <button id="settingsBtn" class="icon-btn" aria-label="Settings">⚙️</button>
+    </div>
+    <div class="chips">
+      <div class="chip" title="Materials – build roads"><span>🧱</span><b id="matVal">0</b></div>
+      <div class="chip" title="Coins"><span>💰</span><b id="coinVal">0</b></div>
+      <div class="chip" title="Population / housing"><span>👥</span><b id="popVal">0</b></div>
+      <div class="chip" title="Appeal – speeds up growth"><span>✨</span><b id="appealVal">1.0</b></div>
+    </div>
+    <div id="roadBar" class="road-bar"><div class="fill"></div><span class="label"></span></div>
+  </header>
+
+  <div id="visitBanner" hidden>
+    <span>👀 Visiting <b id="visitName"></b></span>
+    <button id="visitBack">Back home</button>
+  </div>
+
+  <div id="placeBanner" hidden>
+    <span id="placeText"></span>
+    <button id="placeCancel">Cancel</button>
+  </div>
+
+  <div id="dpad" hidden>
+    <button data-ctl="left">◀</button>
+    <button data-ctl="forward">▲</button>
+    <button data-ctl="reverse">▼</button>
+    <button data-ctl="right">▶</button>
+    <button id="driveExit" class="exit">✕</button>
+  </div>
+
+  <nav id="bottombar">
+    <button id="dailyBtn"><span class="ico">🎁</span><span>Daily</span><i class="dot" hidden></i></button>
+    <button id="marketBtn"><span class="ico">🏪</span><span>Market</span></button>
+    <button id="scanBtn" class="scan"><span class="ico">📷</span><span>Scan</span></button>
+    <button id="itemsBtn"><span class="ico">🎒</span><span>Items</span><i class="dot" hidden></i></button>
+    <button id="socialBtn"><span class="ico">🌐</span><span>Social</span></button>
+  </nav>
+
+  <div id="toast"></div>
+
+  <!-- bottom sheet for menus -->
+  <div id="sheetBackdrop" hidden></div>
+  <section id="sheet" hidden>
+    <div class="grab"></div>
+    <div class="sheet-head">
+      <h2 id="sheetTitle"></h2>
+      <button id="sheetClose" class="icon-btn" aria-label="Close">✕</button>
+    </div>
+    <div id="sheetBody"></div>
+  </section>
+
+  <!-- big centered popup for rewards / milestones -->
+  <div id="modalBackdrop" hidden>
+    <div id="modal">
+      <div id="modalIcon"></div>
+      <h2 id="modalTitle"></h2>
+      <div id="modalBody"></div>
+      <button id="modalOk" class="primary big">Nice!</button>
+    </div>
+  </div>
+
+  <!-- camera scanner -->
+  <div id="scanOverlay" hidden>
+    <video id="scanVideo" playsinline muted></video>
+    <div class="scan-frame"></div>
+    <div class="scan-ui">
+      <p id="scanStatus">Point your camera at any QR code</p>
+      <div class="scan-actions">
+        <label class="btn">📸 Take a photo instead
+          <input id="photoInput" type="file" accept="image/*" capture="environment" hidden />
+        </label>
+        <button id="scanCancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="vendor/jsQR.js"></script>
+  <script src="js/math/utils.js"></script>
+  <script src="js/math/graph.js"></script>
+  <script src="js/primitives/point.js"></script>
+  <script src="js/primitives/segment.js"></script>
+  <script src="js/primitives/polygon.js"></script>
+  <script src="js/primitives/envelope.js"></script>
+  <script src="js/items/tree.js"></script>
+  <script src="js/items/building.js"></script>
+  <script src="js/car/controls.js"></script>
+  <script src="js/car/network.js"></script>
+  <script src="js/car/sensor.js"></script>
+  <script src="js/car/car.js"></script>
+  <script src="js/car/trafficCar.js"></script>
+  <script src="js/viewport.js"></script>
+  <script src="js/game/layout.js"></script>
+  <script src="js/game/city.js"></script>
+  <script src="js/game/rewards.js"></script>
+  <script src="js/game/render.js"></script>
+  <script src="js/game/touch.js"></script>
+  <script src="js/game/scanner.js"></script>
+  <script src="vendor/supabase.js"></script>
+  <script src="js/game/config.js"></script>
+  <script src="js/game/online.js"></script>
+  <script src="js/game/game.js"></script>
+</body>
+</html>

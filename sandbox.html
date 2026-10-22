@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Virtual World</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <div id="app">
+    <header id="toolbar">
+      <div class="brand">🌍 Virtual World</div>
+      <div class="tool-group" id="editTools"></div>
+      <div class="tool-group">
+        <button data-mode="play" title="Drive around the world (P)">▶️ <span>Drive</span></button>
+        <button data-mode="train" title="Evolve self-driving cars (T)">🧠 <span>Train AI</span></button>
+      </div>
+      <div class="tool-group right">
+        <button id="undoBtn" title="Undo (Ctrl/Cmd+Z)">↶</button>
+        <button id="redoBtn" title="Redo (Ctrl/Cmd+Shift+Z)">↷</button>
+        <button id="helpBtn" title="Help (H)">❔</button>
+        <button id="panelToggle" title="Settings panel">☰</button>
+      </div>
+    </header>
+
+    <main>
+      <canvas id="worldCanvas"></canvas>
+      <div id="hud"></div>
+      <canvas id="brainCanvas" width="260" height="280" hidden></canvas>
+      <div id="hint"></div>
+      <div id="toast"></div>
+      <canvas id="miniMap"></canvas>
+
+      <aside id="panel">
+        <section>
+          <h3>World</h3>
+          <div class="btn-grid">
+            <button id="newBtn">🗒️ New empty</button>
+            <button id="sampleBtn">🏙️ Sample city</button>
+            <button id="randomBtn">🎲 Random city</button>
+            <button id="osmBtn">🗺️ Import OSM</button>
+            <button id="exportBtn">💾 Export file</button>
+            <button id="importBtn">📂 Import file</button>
+            <button id="decorateBtn" title="Replace all markings with automatically placed ones">🚦 Auto markings</button>
+            <button id="clearMarkingsBtn">🧽 Clear markings</button>
+            <button id="fitBtn">🔍 Fit view (F)</button>
+            <button id="screenshotBtn">📸 Screenshot</button>
+          </div>
+          <input type="file" id="importFile" accept=".json,.world,application/json" hidden />
+          <div class="stats" id="stats"></div>
+        </section>
+
+        <section>
+          <h3>My worlds</h3>
+          <div class="row">
+            <input id="slotName" placeholder="World name…" />
+            <button id="saveSlotBtn">Save</button>
+          </div>
+          <ul id="slotList"></ul>
+          <label class="check"><input type="checkbox" id="autosaveChk" /> Autosave edits (restored on reload)</label>
+        </section>
+
+        <section>
+          <h3>Generation</h3>
+          <div id="genSliders"></div>
+          <label class="check"><input type="checkbox" id="buildingsChk" /> Buildings</label>
+          <label class="check"><input type="checkbox" id="treesChk" /> Trees</label>
+          <div class="row">
+            <label for="seedInput" class="grow">Seed</label>
+            <input id="seedInput" type="number" class="seed" />
+            <button id="reseedBtn" title="New random seed">🎲</button>
+          </div>
+        </section>
+
+        <section>
+          <h3>View</h3>
+          <label class="check"><input type="checkbox" id="nightChk" /> Night mode (N)</label>
+          <label class="check"><input type="checkbox" id="sensorsChk" /> Show car sensors</label>
+          <label class="check"><input type="checkbox" id="minimapChk" /> Minimap (M)</label>
+          <label class="check"><input type="checkbox" id="routeChk" /> GPS route to target</label>
+          <div class="row">
+            <label for="snapSelect" class="grow">Snap points to grid</label>
+            <select id="snapSelect">
+              <option value="0">Off</option>
+              <option value="25">25</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+            </select>
+          </div>
+        </section>
+
+        <section>
+          <h3>Driving</h3>
+          <div id="driveSliders"></div>
+          <label class="check"><input type="checkbox" id="invincibleChk" /> Invincible (no crashes)</label>
+          <button id="addAiBtn" class="wide">🤖 Add AI driver (uses saved brain)</button>
+        </section>
+
+        <section>
+          <h3>AI training</h3>
+          <div id="trainSliders"></div>
+          <label class="check"><input type="checkbox" id="autoEvolveChk" /> Auto-evolve (save best &amp; restart)</label>
+          <div class="btn-grid">
+            <button id="saveBrainBtn">💾 Save best</button>
+            <button id="discardBrainBtn">🗑️ Discard brain</button>
+            <button id="nextGenBtn" class="wide">⏭️ Next generation</button>
+          </div>
+          <div class="stats" id="brainStatus"></div>
+        </section>
+      </aside>
+    </main>
+  </div>
+
+  <dialog id="osmDialog">
+    <form method="dialog">
+      <h2>🗺️ Import from OpenStreetMap</h2>
+      <p class="muted">Fetch real roads directly, or paste Overpass JSON. Keep areas small (radius ≤ 600 m) – big maps take a while to generate.</p>
+      <fieldset>
+        <legend>Fetch an area</legend>
+        <div class="row">
+          <label>Lat <input id="osmLat" type="number" step="any" value="40.7580" /></label>
+          <label>Lon <input id="osmLon" type="number" step="any" value="-73.9855" /></label>
+          <label>Radius (m) <input id="osmRadius" type="number" value="300" min="50" max="2000" /></label>
+        </div>
+        <div class="row presets">
+          <button type="button" data-ll="40.7580,-73.9855">New York</button>
+          <button type="button" data-ll="48.8584,2.2945">Paris</button>
+          <button type="button" data-ll="51.5007,-0.1246">London</button>
+          <button type="button" data-ll="35.6595,139.7005">Tokyo</button>
+          <button type="button" data-ll="41.3851,2.1734">Barcelona</button>
+          <button type="button" data-ll="45.4340,12.3388">Venice</button>
+        </div>
+        <button type="button" id="osmFetchBtn" class="primary">Fetch roads</button>
+      </fieldset>
+      <fieldset>
+        <legend>…or paste Overpass JSON</legend>
+        <p class="muted">Run this at <a href="https://overpass-turbo.eu" target="_blank" rel="noopener">overpass-turbo.eu</a> and use <em>Export → raw OSM data</em>:</p>
+        <pre id="osmQuery"></pre>
+        <textarea id="osmText" rows="5" placeholder='{"elements": [...]}'></textarea>
+        <button type="button" id="osmParseBtn" class="primary">Import pasted data</button>
+      </fieldset>
+      <p id="osmStatus" class="muted"></p>
+      <div class="dialog-actions"><button value="cancel">Close</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="helpDialog">
+    <form method="dialog">
+      <h2>❔ How to play</h2>
+      <div class="help-grid">
+        <div>
+          <h4>🛣️ Roads editor (1)</h4>
+          <ul>
+            <li><b>Click</b> empty space: add point &amp; connect to selected</li>
+            <li><b>Click a road</b>: split it into a junction</li>
+            <li><b>Drag</b> a point: move it</li>
+            <li><b>Right-click</b>: deselect → delete point → delete road</li>
+            <li><b>O</b> on a road: cycle one-way ↔ two-way</li>
+            <li><b>Delete</b>: remove selected point</li>
+            <li><b>Esc</b>: deselect</li>
+          </ul>
+          <h4>🚦 Marking tools (2–8)</h4>
+          <ul>
+            <li>Hover a lane, <b>click</b> to place</li>
+            <li>Hold <b>Shift</b> to flip direction</li>
+            <li><b>Right-click</b> a marking to remove it</li>
+          </ul>
+        </div>
+        <div>
+          <h4>▶️ Drive (P)</h4>
+          <ul>
+            <li><b>WASD / Arrows</b>: drive · <b>Shift</b>: boost</li>
+            <li><b>R</b>: respawn · <b>C</b>: re-center camera</li>
+            <li>Follow the blue GPS line to the 🎯 target</li>
+            <li>Stop inside a 🅿️ spot to park</li>
+          </ul>
+          <h4>🧠 Train AI (T)</h4>
+          <ul>
+            <li>Cars with random brains drive from the start marking</li>
+            <li>The best brain is saved and mutated each generation</li>
+            <li>Use it in Drive mode with “Add AI driver”</li>
+          </ul>
+          <h4>🎥 Camera</h4>
+          <ul>
+            <li><b>Wheel / pinch</b>: zoom · <b>Space+drag</b> or <b>middle-drag</b>: pan</li>
+            <li><b>F</b>: fit world · <b>N</b>: night · <b>M</b>: minimap</li>
+            <li>Click the minimap to jump</li>
+            <li><b>Ctrl/Cmd+Z</b> undo · <b>Ctrl/Cmd+S</b> save</li>
+          </ul>
+        </div>
+      </div>
+      <div class="dialog-actions"><button value="cancel" class="primary">Let's go!</button></div>
+    </form>
+  </dialog>
+
+  <script src="js/math/utils.js"></script>
+  <script src="js/math/graph.js"></script>
+  <script src="js/primitives/point.js"></script>
+  <script src="js/primitives/segment.js"></script>
+  <script src="js/primitives/polygon.js"></script>
+  <script src="js/primitives/envelope.js"></script>
+  <script src="js/markings/markings.js"></script>
+  <script src="js/items/tree.js"></script>
+  <script src="js/items/building.js"></script>
+  <script src="js/editors/graphEditor.js"></script>
+  <script src="js/editors/markingEditor.js"></script>
+  <script src="js/car/controls.js"></script>
+  <script src="js/car/network.js"></script>
+  <script src="js/car/sensor.js"></script>
+  <script src="js/car/car.js"></script>
+  <script src="js/car/trafficCar.js"></script>
+  <script src="js/visualizer.js"></script>
+  <script src="js/viewport.js"></script>
+  <script src="js/world.js"></script>
+  <script src="js/osm.js"></script>
+  <script src="js/miniMap.js"></script>
+  <script src="js/samples.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
