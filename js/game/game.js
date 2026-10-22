@@ -478,7 +478,7 @@ $("#socialBtn").addEventListener("click", () => openSocial());
 function townStatsCard() {
   const age = Math.max(1, Math.round((Date.now() - city.createdAt) / 86400000));
   return "<div class='card'><h3>" + TIERS[city.tier].icon + " " + esc(city.name) +
-    (online.handle ? " <span class='muted'>@" + esc(online.handle) + "</span>" : "") + "</h3><div class='stat-grid'>" +
+    "</h3><div class='stat-grid'>" +
     "<div class='stat'><b>" + fmt(city.pop) + "</b><span>👥 people</span></div>" +
     "<div class='stat'><b>" + city.stats.scans + "</b><span>📷 codes scanned</span></div>" +
     "<div class='stat'><b>" + city.roadCount + "</b><span>🛣️ roads</span></div>" +
@@ -492,7 +492,7 @@ function townRows(towns, { rankFrom = 1, removable = false } = {}) {
     const me = online.user && t.id === online.user.id;
     return "<div class='item-row town-row" + (me ? " me" : "") + "'>" +
       "<div class='rank'>" + (rankFrom ? "#" + (rankFrom + i) : TIERS[t.tier] ? TIERS[t.tier].icon : "🏘️") + "</div>" +
-      "<div class='grow'><b>" + esc(t.city_name || "Unnamed") + "</b><small>@" + esc(t.handle) + " · " + fmt(t.pop) + " 👥 · " + t.roads + " 🛣️</small></div>" +
+      "<div class='grow'><b>" + esc(t.city_name || "Unnamed") + "</b><small>" + fmt(t.pop) + " 👥 · " + t.roads + " 🛣️</small></div>" +
       (me ? "<span class='muted'>you</span>" : "<button class='small' data-visit='" + esc(t.handle) + "'>👀</button>") +
       (removable ? "<button class='small ghost' data-unfollow='" + esc(t.id) + "' aria-label='Remove friend'>✕</button>" : "") +
       "</div>";
@@ -507,10 +507,8 @@ function openSocial(tab = "top") {
   } else if (!online.ready) {
     html += "<p class='muted' style='text-align:center'>📡 Can't reach the server right now – leaderboards will be back when you're online.</p>" + visitByLinkCard();
   } else if (!online.handle) {
-    const suggestion = city.name.toLowerCase().replace(/[^a-z0-9_]/g, "").slice(0, 16);
-    html += "<div class='card'><h3>🏷️ Pick a username</h3><p class='muted'>Join the leaderboard and let friends find your town.</p>" +
-      "<div class='row'><input type='text' id='handleInput' class='grow' maxlength='17' autocapitalize='off' autocomplete='off' spellcheck='false' placeholder='" + esc(suggestion) + "' />" +
-      "<button id='handleGo' class='primary'>Join</button></div><p class='muted' id='handleMsg'></p></div>" + visitByLinkCard();
+    html += "<p class='muted' style='text-align:center'>🏆 Joining the leaderboard as <b>" + esc(city.name) + "</b>…</p>" + visitByLinkCard();
+    syncOnline(true);
   } else {
     html += "<div class='tabs'><button data-tab='top' class='" + (tab === "top" ? "on" : "") + "'>🏆 Top towns</button>" +
       "<button data-tab='friends' class='" + (tab === "friends" ? "on" : "") + "'>👫 Friends</button></div>" +
@@ -538,26 +536,14 @@ function openSocial(tab = "top") {
       if (b.dataset.visit) return visitHandle(b.dataset.visit).then((ok) => ok && closeSheet());
       online.unfollow(b.dataset.unfollow).then(() => openSocial("friends"));
     });
-    const claim = body.querySelector("#handleGo");
-    if (claim) claim.addEventListener("click", async () => {
-      const input = body.querySelector("#handleInput");
-      claim.disabled = true;
-      const err = await online.claimHandle(input.value || input.placeholder, city);
-      claim.disabled = false;
-      if (err) body.querySelector("#handleMsg").textContent = err;
-      else {
-        toast("🎉 Welcome, @" + online.handle + "!");
-        openSocial();
-      }
-    });
     if (online.handle) fillTab(body, tab);
     mountAccount(body);
   });
 }
 
 function visitByLinkCard() {
-  return "<div class='card'><h3>👀 Visit a town</h3><p class='muted'>Type a username or paste a town link.</p>" +
-    "<div class='row'><input type='text' id='visitInput' class='grow' autocapitalize='off' autocomplete='off' spellcheck='false' placeholder='@username or link' />" +
+  return "<div class='card'><h3>👀 Visit a town</h3><p class='muted'>Type a town's name or paste a town link.</p>" +
+    "<div class='row'><input type='text' id='visitInput' class='grow' autocapitalize='off' autocomplete='off' spellcheck='false' placeholder='Town name or link' />" +
     "<button id='visitGo'>Go</button></div></div>";
 }
 
@@ -571,7 +557,7 @@ async function fillTab(body, tab) {
     } else {
       const towns = await online.friends();
       el.innerHTML =
-        "<div class='row'><input type='text' id='followInput' class='grow' autocapitalize='off' autocomplete='off' spellcheck='false' placeholder='Add a friend by @username' />" +
+        "<div class='row'><input type='text' id='followInput' class='grow' autocapitalize='off' autocomplete='off' spellcheck='false' placeholder='Add a friend&#39;s town by name' />" +
         "<button id='followGo' class='primary'>Add</button></div>" + townRows(towns, { rankFrom: 0, removable: true });
       el.querySelector("#followGo").addEventListener("click", async () => {
         const err = await online.follow(el.querySelector("#followInput").value);
@@ -652,12 +638,12 @@ async function shareTown() {
 
 async function visitHandle(handle) {
   if (!online.ready) {
-    toast("📡 You need to be online to visit by username");
+    toast("📡 You need to be online to visit a town by name");
     return false;
   }
   const town = await online.townByHandle(decodeURIComponent(handle));
   if (!town) {
-    toast("🤷 Couldn't find @" + Online.normalizeHandle(decodeURIComponent(handle)));
+    toast("🤷 Couldn't find a town called " + decodeURIComponent(handle));
     return false;
   }
   return startVisit(town.share_code);
@@ -733,6 +719,7 @@ $("#cityName").addEventListener("click", () => {
   if (name && name.trim()) {
     city.name = name.trim().slice(0, 24);
     saveGame();
+    syncOnline(true); // the username follows the town name
   }
 });
 
@@ -960,11 +947,11 @@ document.addEventListener("visibilitychange", () => {
 });
 window.addEventListener("pagehide", saveGame);
 
-// Progress made while the app was closed (up to 12 hours).
+// Progress made while the app was closed (up to 3 hours).
 function catchUp() {
   const away = (Date.now() - city.lastSeen) / 1000;
   if (away < 60) return;
-  const s = city.simulate(Math.min(away, 12 * 3600));
+  const s = city.simulate(Math.min(away, 3 * 3600));
   city.lastSeen = Date.now();
   saveGame();
   if (s.pop > 0 || s.roads > 0 || s.built > 0) {
@@ -1016,7 +1003,7 @@ function catchUp() {
     if (!ok) return;
     const t = location.hash.match(/^#town=([^&]+)/);
     if (t) visitHandle(t[1]).then((found) => found || history.replaceState(null, "", location.pathname + location.search));
-    offerCloudTown(false);
+    offerCloudTown(false).then(() => syncOnline(true));
   });
   requestAnimationFrame(loop);
 

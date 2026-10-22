@@ -71,8 +71,20 @@ class Online {
     this.profile = data || null;
   }
 
+  // Usernames are the town name: "Maple Hill" → "maplehill". Also used for what players type.
   static normalizeHandle(h) {
-    return String(h || "").trim().replace(/^@/, "").toLowerCase();
+    const slug = String(h || "").toLowerCase().replace(/[^a-z0-9_]/g, "").slice(0, 16);
+    return slug.length >= 3 ? slug : (slug + "town").slice(0, 16);
+  }
+
+  // Whether a handle already belongs to this town name (exact, or with a number added).
+  static handleMatches(handle, name) {
+    const base = Online.normalizeHandle(name);
+    if (handle === base) return true;
+    return [15, 12].some((k) => {
+      const prefix = base.slice(0, k);
+      return handle.startsWith(prefix) && /^\d+$/.test(handle.slice(prefix.length));
+    });
   }
 
   #cardFor(city) {
@@ -87,20 +99,29 @@ class Online {
     };
   }
 
-  // Returns null on success, or a message for the player.
-  async claimHandle(raw, city) {
-    const handle = Online.normalizeHandle(raw);
-    if (!HANDLE_RE.test(handle)) return "Use 3–16 letters, numbers or _";
-    const row = { id: this.user.id, handle, ...this.#cardFor(city) };
-    const { data, error } = await this.sb.from("profiles").upsert(row).select(PROFILE_COLS).single();
-    if (error) return error.code === "23505" ? "@" + handle + " is taken – try another" : "Couldn't save that name";
-    this.profile = data;
-    return null;
+  // Gives the player a username made from their town name. If another town already
+  // has that name, a number is added (oakstead, oakstead2, …).
+  async #claimTownHandle(city) {
+    const base = Online.normalizeHandle(city.name);
+    const tries = [base];
+    for (let n = 2; n <= 9; n++) tries.push(base.slice(0, 15) + n);
+    for (let i = 0; i < 3; i++) tries.push(base.slice(0, 12) + Math.floor(1000 + Math.random() * 9000));
+    for (const handle of tries) {
+      if (!HANDLE_RE.test(handle)) continue;
+      const row = { id: this.user.id, handle, ...this.#cardFor(city) };
+      const { data, error } = await this.sb.from("profiles").upsert(row).select(PROFILE_COLS).single();
+      if (!error) {
+        this.profile = data;
+        return;
+      }
+      if (error.code !== "23505") throw error;
+    }
   }
 
   // Pushes the public town card and the private full save.
   async publish(city) {
     if (!this.ready) return;
+    if (!this.profile || !Online.handleMatches(this.profile.handle, city.name)) await this.#claimTownHandle(city);
     const jobs = [this.sb.from("saves").upsert({ user_id: this.user.id, data: city.toSave(), pop: Math.floor(city.pop) })];
     if (this.profile) jobs.push(this.sb.from("profiles").update(this.#cardFor(city)).eq("id", this.user.id));
     const results = await Promise.all(jobs);
@@ -137,12 +158,12 @@ class Online {
   // Returns null on success, or a message for the player.
   async follow(raw) {
     const handle = Online.normalizeHandle(raw);
-    if (!this.profile) return "Pick your own username first";
+    if (!this.profile) return "Still joining the leaderboard – try again in a moment";
     if (handle === this.profile.handle) return "That's you! 😄";
     const { data } = await this.sb.from("profiles").select("id").eq("handle", handle).maybeSingle();
-    if (!data) return "No town called @" + handle;
+    if (!data) return "No town called " + raw.trim();
     const { error } = await this.sb.from("follows").insert({ follower: this.user.id, followee: data.id });
-    if (error && error.code !== "23505") return "Couldn't add @" + handle;
+    if (error && error.code !== "23505") return "Couldn't add " + raw.trim();
     return null;
   }
 
