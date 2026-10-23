@@ -23,6 +23,13 @@ class Viewport {
     this.#addEventListeners();
   }
 
+  // Re-measures when the canvas's on-screen size changed. In-app browsers can
+  // resize the page (toolbars sliding away) without firing a resize event.
+  fit() {
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    if (this.canvas.clientWidth !== this.width || this.canvas.clientHeight !== this.height || dpr !== this.dpr) this.resize();
+  }
+
   resize() {
     const dpr = Math.min(2, window.devicePixelRatio || 1); // cap for phone performance
     const w = this.canvas.clientWidth, h = this.canvas.clientHeight;
