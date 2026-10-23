@@ -6,7 +6,7 @@
 const $ = (sel) => document.querySelector(sel);
 const SAVE_KEY = "vw.city";
 const PREFS_KEY = "vw.gamePrefs";
-const VERSION = "0.3.1";
+const VERSION = "0.3.2";
 
 const canvas = $("#cityCanvas");
 const ctx = canvas.getContext("2d");
@@ -937,7 +937,21 @@ function updateTraffic(active) {
 // Main loop
 // ---------------------------------------------------------------------------
 const touch = new TouchCamera(viewport, { onTap });
-window.addEventListener("resize", () => viewport.resize());
+// iOS Home Screen apps can lay the page out shorter than the screen (by the
+// status bar's height), leaving a bare strip at the bottom. Measure it so the
+// CSS can stretch over it. Safari tabs and Android are left alone.
+function fitHomeScreenApp() {
+  if (navigator.standalone !== true) return;
+  const portrait = innerHeight >= innerWidth;
+  const full = portrait ? Math.max(screen.width, screen.height) : Math.min(screen.width, screen.height);
+  const gap = clamp(full - innerHeight, 0, 80);
+  document.documentElement.style.setProperty("--gap", gap + "px");
+}
+fitHomeScreenApp();
+window.addEventListener("resize", () => {
+  fitHomeScreenApp();
+  viewport.resize();
+});
 
 let last = performance.now();
 let saveTimer = 0;
