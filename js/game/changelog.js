@@ -6,6 +6,14 @@
 
 const CHANGELOG = [
   {
+    version: "0.5.0",
+    notes: [
+      "⚖️ Steadier growth: people move in more gradually, and each new road costs a bit more than the last",
+      "🏪 The market now has a daily stock – one road's worth of materials, restocked every day",
+      "⬆️ Upgrades cost more and unlock at Town (40 people) and City (120 people)",
+    ],
+  },
+  {
     version: "0.4.0",
     notes: [
       "🏆 Tap your tier badge (Hamlet, Village, …) to see the next milestone",

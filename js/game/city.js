@@ -60,6 +60,7 @@ class City {
     this.inventory = [];
     this.scanned = {};
     this.daily = { last: null, streak: 0 };
+    this.market = { day: null, bought: 0 }; // materials bought from the market today
     this.tierReached = 0;
     this.stats = { scans: 0, kinds: {}, collected: 0 };
     this.createdAt = Date.now();
@@ -118,7 +119,7 @@ class City {
   }
 
   roadCost() {
-    return Math.round(20 + 12 * Math.pow(this.roadCount - 1, 1.15));
+    return Math.round(20 + 12 * Math.pow(this.roadCount - 1, 1.4));
   }
 
   roadDuration() {
@@ -127,8 +128,8 @@ class City {
 
   upgradeInfo(lot) {
     if ((lot.kind !== "res" && lot.kind !== "com") || lot.level >= 3) return null;
-    const cost = lot.level === 1 ? 40 : 150;
-    const needPop = lot.level === 1 ? 15 : 60;
+    const cost = lot.level === 1 ? 150 : 600;
+    const needPop = lot.level === 1 ? 40 : 120;
     return { cost, needPop, ok: this.coins >= cost && this.pop >= needPop && lot.building <= 0 };
   }
 
@@ -195,7 +196,7 @@ class City {
 
     // People move in while there's housing; taxes trickle in.
     const cap = this.capacity;
-    if (this.pop < cap) this.pop = Math.min(cap, this.pop + dt * 0.12 * appeal * (1 + cap * 0.01));
+    if (this.pop < cap) this.pop = Math.min(cap, this.pop + dt * 0.04 * appeal * (1 + cap * 0.002));
     else this.pop = Math.max(cap, this.pop - dt * 0.5);
     this.coins += dt * this.pop * 0.003;
 
@@ -268,8 +269,19 @@ class City {
     return true;
   }
 
+  // The market sells one road's worth of materials a day, so coins speed a
+  // town up without letting taxes snowball it on their own.
+  marketStock() {
+    const total = Math.max(10, Math.round(this.roadCost() / 10) * 10);
+    const bought = this.market.day === todayKey() ? this.market.bought : 0;
+    return { total, left: Math.max(0, total - bought) };
+  }
+
   buyMaterials(amount, price) {
-    if (this.coins < price) return false;
+    if (this.coins < price || amount > this.marketStock().left) return false;
+    const today = todayKey();
+    if (this.market.day !== today) this.market = { day: today, bought: 0 };
+    this.market.bought += amount;
     this.coins -= price;
     this.materials += amount;
     return true;
@@ -318,6 +330,7 @@ class City {
       inventory: this.inventory,
       scanned: this.scanned,
       daily: this.daily,
+      market: this.market,
       tierReached: this.tierReached,
       stats: this.stats,
       createdAt: this.createdAt,
@@ -336,7 +349,7 @@ class City {
       lot.coins = s[3];
       lot.special = s[4] || null;
     });
-    for (const k of ["materials", "coins", "pop", "roadJob", "inventory", "scanned", "daily", "tierReached", "stats", "createdAt", "lastSeen"]) {
+    for (const k of ["materials", "coins", "pop", "roadJob", "inventory", "scanned", "daily", "market", "tierReached", "stats", "createdAt", "lastSeen"]) {
       if (data[k] !== undefined) city[k] = data[k];
     }
     return city;

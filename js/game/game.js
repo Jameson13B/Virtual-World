@@ -6,7 +6,7 @@
 const $ = (sel) => document.querySelector(sel);
 const SAVE_KEY = "vw.city";
 const PREFS_KEY = "vw.gamePrefs";
-const VERSION = "0.4.0";
+const VERSION = "0.5.0";
 
 const canvas = $("#cityCanvas");
 const ctx = canvas.getContext("2d");
@@ -474,16 +474,23 @@ $("#dailyBtn").addEventListener("click", () => {
 
 $("#marketBtn").addEventListener("click", () => {
   if (visit) return;
+  // Bundles of a tenth, a third and all of today's stock; bigger bundles are cheaper.
+  const stock = city.marketStock();
+  const unit = Math.max(10, Math.round(stock.total / 100) * 10);
   const offers = [
-    { amount: 10, price: 60 },
-    { amount: 30, price: 165 },
-    { amount: 100, price: 500 },
-  ];
+    { amount: unit, each: 6 },
+    { amount: unit * 3, each: 5.5 },
+    { amount: stock.left, each: 5 },
+  ].filter((o, i, all) => o.amount > 0 && all.findIndex((x) => x.amount === o.amount) === i)
+   .map((o) => ({ amount: o.amount, price: Math.round(o.amount * o.each) }));
   const html =
     "<p>Trade coins for building materials. Scanning codes out in the world is much cheaper! 😉</p>" +
+    "<div class='card'><div class='road-bar'><div class='fill' style='width:" + (stock.left / stock.total) * 100 + "%'></div>" +
+    "<span class='label'>Today's stock: " + stock.left + " / " + stock.total + " 🧱</span></div>" +
+    "<p class='muted'>" + (stock.left ? "The market restocks every day." : "Sold out – the market restocks tomorrow.") + "</p></div>" +
     "<div class='list'>" + offers.map((o, i) =>
       "<div class='item-row'><span class='emoji'>🧱</span><div class='grow'><b>" + o.amount + " materials</b><small>" + o.price + " 💰</small></div>" +
-      "<button data-offer='" + i + "' class='gold'>Buy</button></div>").join("") + "</div>" +
+      "<button data-offer='" + i + "' class='gold'" + (o.amount > stock.left ? " disabled" : "") + ">Buy</button></div>").join("") + "</div>" +
     "<div class='card'><h3>📈 Your economy</h3><div class='stat-grid'>" +
     "<div class='stat'><b>" + fmt(city.capacity) + "</b><span>🏠 housing</span></div>" +
     "<div class='stat'><b>" + fmt(city.jobs) + "</b><span>💼 jobs</span></div>" +
@@ -497,6 +504,7 @@ $("#marketBtn").addEventListener("click", () => {
         if (city.buyMaterials(o.amount, o.price)) {
           toast("+" + o.amount + " 🧱");
           saveGame();
+          $("#marketBtn").click();
         } else {
           toast("Not enough coins");
         }
