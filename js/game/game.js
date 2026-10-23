@@ -878,9 +878,13 @@ document.querySelectorAll("#dpad [data-ctl]").forEach((b) => {
 // ---------------------------------------------------------------------------
 function updateTraffic(active) {
   const want = Math.min(30, Math.floor(active.city.pop / 6));
-  const world = { graph: active.city.layout.graph, roadWidth: ROAD_W, markings: [] };
   while (ui.cars.length > want) ui.cars.pop();
-  while (ui.cars.length < want) ui.cars.push(new TrafficCar(world));
+  if (ui.cars.length < want) {
+    // Add one car per frame, and only where it won't land on top of another.
+    const car = new TownCar(active.city.layout.graph);
+    for (let i = 0; i < 5 && ui.cars.some((o) => distance(o, car) < 80); i++) car.spawn();
+    if (!ui.cars.some((o) => distance(o, car) < 80)) ui.cars.push(car);
+  }
   const everyone = ui.drive ? [...ui.cars, ui.drive] : ui.cars;
   for (const car of ui.cars) car.update(everyone);
 }
