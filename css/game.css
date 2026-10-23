@@ -70,7 +70,8 @@ button.big { width: 100%; padding: 14px; font-size: 17px; }
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
   max-width: 55vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.tier { font-size: 13px; color: #fde68a; background: rgba(0, 0, 0, 0.35); padding: 3px 8px; border-radius: 99px; white-space: nowrap; }
+.tier { font-size: 13px; color: #fde68a; background: rgba(0, 0, 0, 0.35); padding: 3px 8px; border: none; border-radius: 99px; white-space: nowrap; }
+.chip.tappable { cursor: pointer; }
 .title-row .icon-btn { margin-left: auto; }
 .chips { display: flex; gap: 6px; margin-top: 6px; }
 .chip {
@@ -204,6 +205,8 @@ button.big { width: 100%; padding: 14px; font-size: 17px; }
 .item-row .emoji { font-size: 30px; }
 .item-row .grow { flex: 1; }
 .item-row small { display: block; color: var(--muted); }
+.item-row.current { box-shadow: inset 0 0 0 2px var(--gold); }
+.notes { text-align: left; margin: 0 0 14px; padding-left: 22px; line-height: 1.5; }
 .rarity { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
 .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 10px 0; }
 .stat { background: var(--surface); border-radius: 12px; padding: 10px; text-align: center; }

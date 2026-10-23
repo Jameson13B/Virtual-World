@@ -18,14 +18,14 @@
   <header id="topbar">
     <div class="title-row">
       <button id="cityName" class="city-name" title="Rename"></button>
-      <span id="tierBadge" class="tier"></span>
+      <button id="tierBadge" class="tier" aria-label="Milestones"></button>
       <button id="settingsBtn" class="icon-btn" aria-label="Settings">⚙️</button>
     </div>
     <div class="chips">
       <div class="chip" title="Materials – build roads"><span>🧱</span><b id="matVal">0</b></div>
       <div class="chip" title="Coins"><span>💰</span><b id="coinVal">0</b></div>
       <div class="chip" title="Population / housing"><span>👥</span><b id="popVal">0</b></div>
-      <div class="chip" title="Appeal – speeds up growth"><span>✨</span><b id="appealVal">1.0</b></div>
+      <div class="chip tappable" id="appealChip" role="button" title="Appeal – speeds up growth"><span>✨</span><b id="appealVal">1.0</b></div>
     </div>
     <div id="roadBar" class="road-bar"><div class="fill"></div><span class="label"></span></div>
   </header>
@@ -119,6 +119,7 @@
   <script src="vendor/supabase.js"></script>
   <script src="js/game/config.js"></script>
   <script src="js/game/online.js"></script>
+  <script src="js/game/changelog.js"></script>
   <script src="js/game/game.js"></script>
 </body>
 </html>

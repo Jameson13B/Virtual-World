@@ -6,7 +6,7 @@
 const $ = (sel) => document.querySelector(sel);
 const SAVE_KEY = "vw.city";
 const PREFS_KEY = "vw.gamePrefs";
-const VERSION = "0.3.3";
+const VERSION = "0.4.0";
 
 const canvas = $("#cityCanvas");
 const ctx = canvas.getContext("2d");
@@ -14,7 +14,7 @@ const viewport = new Viewport(canvas, 1.3);
 viewport.minZoom = 0.35;
 viewport.maxZoom = 8;
 
-const prefs = { extras: false, welcomed: false, ...readJSON(PREFS_KEY, {}) };
+const prefs = { extras: false, welcomed: false, seenVersion: null, ...readJSON(PREFS_KEY, {}) };
 const savePrefs = () => writeJSON(PREFS_KEY, prefs);
 
 let city = null;
@@ -176,6 +176,70 @@ function updateTopbar() {
   }
   $("#dailyBtn .dot").hidden = !city.dailyStatus().available;
   $("#itemsBtn .dot").hidden = !city.inventory.length;
+}
+
+$("#tierBadge").addEventListener("click", openMilestones);
+$("#appealChip").addEventListener("click", openAppeal);
+
+// Every tier, with progress toward the next one.
+function openMilestones() {
+  const c = visit ? visit.city : city;
+  const t = c.tier, next = TIERS[t + 1];
+  let html = "";
+  if (next) {
+    const from = TIERS[t].pop, p = clamp((c.pop - from) / (next.pop - from), 0, 1);
+    html +=
+      "<div class='card'><h3>Next: " + next.icon + " " + next.name + "</h3>" +
+      "<div class='road-bar'><div class='fill' style='width:" + p * 100 + "%'></div>" +
+      "<span class='label'>👥 " + Math.floor(c.pop) + " / " + next.pop + " people</span></div>" +
+      "<p class='muted'>" + (next.pop - Math.floor(c.pop)) + " more people to go." +
+      (visit ? "" : " Reward: +" + next.reward + " 🧱") + "</p>" +
+      (!visit && c.pop >= c.capacity ? "<p class='muted'>🏠 Every home is full – new roads bring new homes, and scanning brings materials for roads.</p>" : "") +
+      "</div>";
+  } else {
+    html += "<div class='card'><h3>🏆 Top tier reached!</h3><p class='muted'>" + esc(c.name) + " is a " + TIERS[t].name + ". Keep growing to climb the leaderboard.</p></div>";
+  }
+  html += "<div class='list'>" + TIERS.map((tier, i) =>
+    "<div class='item-row" + (i === t ? " current" : "") + "'><span class='emoji'>" + tier.icon + "</span><div class='grow'><b>" + tier.name + "</b>" +
+    "<small>" + (tier.pop ? tier.pop + " people" : "Where every town starts") + (tier.reward ? " · +" + tier.reward + " 🧱" : "") + "</small></div>" +
+    "<span>" + (i <= t ? "✅" : "") + "</span></div>").join("") + "</div>";
+  openSheet("🏆 Milestones", html);
+}
+
+// What appeal does, where this town's comes from, and how to raise it.
+function openAppeal() {
+  const c = visit ? visit.city : city;
+  const placed = {};
+  for (const l of c.lots) if (l.kind === "special" && l.building <= 0) placed[l.special] = (placed[l.special] || 0) + 1;
+  const ids = Object.keys(placed);
+  const unplaced = visit ? 0 : city.inventory.length;
+  const pct = (a) => "+" + Math.round(a * 100) + "%";
+  let html =
+    "<div class='stat-grid'><div class='stat'><b>✨ " + c.appeal.toFixed(2) + "</b><span>" + (visit ? "Their" : "Your") + " appeal</span></div>" +
+    "<div class='stat'><b>" + pct(c.appeal - 1) + "</b><span>Faster growth</span></div></div>" +
+    "<p>Appeal speeds up everything: empty lots develop faster, people move in faster, and shops earn more coins.</p>" +
+    "<div class='card'><h3>Where it comes from</h3><div class='list'>" +
+    "<div class='row'><span class='grow'>🏕️ Every town</span><b>1.00</b></div>" +
+    ids.map((id) => {
+      const sp = SPECIALS[id];
+      return "<div class='row'><span class='grow'>" + sp.icon + " " + sp.name + (placed[id] > 1 ? " ×" + placed[id] : "") + "</span><b>" + pct(sp.appeal * placed[id]) + "</b></div>";
+    }).join("") +
+    "</div>" + (ids.length ? "" : "<p class='muted'>No special buildings yet.</p>") + "</div>";
+  if (!visit) {
+    html +=
+      "<div class='card'><h3>How to raise it</h3><p class='muted'>Scanning codes sometimes drops special buildings. Place them on empty lots – rarer ones add more:</p>" +
+      "<div class='list'>" + Object.keys(RARITY_INFO).map((r) => {
+        const all = Object.values(SPECIALS).filter((sp) => sp.rarity === r);
+        const lo = Math.min(...all.map((sp) => sp.appeal)), hi = Math.max(...all.map((sp) => sp.appeal));
+        return "<div class='row'><span class='grow'><span class='rarity' style='color:" + RARITY_INFO[r].color + "'>" + RARITY_INFO[r].label + "</span> " +
+          all.map((sp) => sp.icon).join(" ") + "</span><b>" + pct(lo) + (hi > lo ? "–" + Math.round(hi * 100) + "%" : "") + "</b></div>";
+      }).join("") + "</div></div>" +
+      (unplaced ? "<button id='appealItems' class='primary big'>🎒 Place your " + unplaced + " item" + (unplaced > 1 ? "s" : "") + "</button>" : "");
+  }
+  openSheet("✨ Appeal", html, (body) => {
+    const b = body.querySelector("#appealItems");
+    if (b) b.addEventListener("click", () => $("#itemsBtn").click());
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -784,6 +848,7 @@ function openSettings() {
     "<button id='sExport'>💾 Back up my town</button>" +
     "<button id='sImport'>📂 Restore from backup</button>" +
     "<button id='sHelp'>❔ How to play</button>" +
+    "<button id='sNews'>📰 What's new</button>" +
     "<button id='sReset' style='color:#fca5a5'>🗑️ Start a brand new town</button>" +
     "</div>" + extras +
     "<div class='version' id='versionLabel'>Virtual World v" + VERSION + "</div>";
@@ -792,6 +857,10 @@ function openSettings() {
     body.querySelector("#sHelp").addEventListener("click", () => {
       closeSheet();
       showWelcome(false);
+    });
+    body.querySelector("#sNews").addEventListener("click", () => {
+      closeSheet();
+      showWhatsNew(null, true);
     });
     body.querySelector("#sExport").addEventListener("click", async () => {
       const data = JSON.stringify(city.toSave());
@@ -883,6 +952,22 @@ function showWelcome(fresh) {
   });
 }
 
+// Releases newer than `since` (just the latest for players from before this
+// existed), at most three. With `all`, the whole list for ⚙️ Settings.
+function showWhatsNew(since, all = false) {
+  let entries = all ? CHANGELOG : CHANGELOG.filter((e) => compareVersions(e.version, VERSION) <= 0);
+  if (!all) entries = since ? entries.filter((e) => compareVersions(e.version, since) > 0).slice(0, 3) : entries.slice(0, 1);
+  if (!entries.length) return;
+  showModal({
+    icon: "📰",
+    title: "What's new",
+    body: entries.map((e) =>
+      "<p class='muted' style='margin-bottom:4px'>v" + esc(e.version) + "</p>" +
+      "<ul class='notes'>" + e.notes.map((n) => "<li>" + esc(n) + "</li>").join("") + "</ul>").join(""),
+    button: all ? "Close" : "Cool!",
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Hidden extra: drive around your own town
 // ---------------------------------------------------------------------------
@@ -920,8 +1005,18 @@ document.querySelectorAll("#dpad [data-ctl]").forEach((b) => {
 // ---------------------------------------------------------------------------
 // Ambient traffic: more people, more cars
 // ---------------------------------------------------------------------------
+// One car per 6 people, but no more than the roads can comfortably hold
+// (one per 250 units of road), and at most 60 so phones stay smooth.
+function roadLength(c) {
+  const segs = c.layout.graph.segments;
+  if (c._roadLen && c._roadLen.n === segs.length) return c._roadLen.len;
+  const len = segs.reduce((sum, s) => sum + s.length(), 0);
+  c._roadLen = { n: segs.length, len };
+  return len;
+}
 function updateTraffic(active) {
-  const want = Math.min(30, Math.floor(active.city.pop / 6));
+  const c = active.city;
+  const want = Math.min(60, Math.floor(c.pop / 6), Math.floor(roadLength(c) / 250));
   while (ui.cars.length > want) ui.cars.pop();
   if (ui.cars.length < want) {
     // Add one car per frame, and only where it won't land on top of another.
@@ -1055,7 +1150,10 @@ function catchUp() {
     showWelcome(true);
   } else {
     catchUp();
+    if (prefs.seenVersion !== VERSION) showWhatsNew(prefs.seenVersion);
   }
+  prefs.seenVersion = VERSION;
+  savePrefs();
   const m = location.hash.match(/^#visit=(.+)$/);
   if (m) startVisit(m[1]);
   updateTopbar();

@@ -1,0 +1,40 @@
+// ---------------------------------------------------------------------------
+// "What's new": player-facing notes, newest first. Bump VERSION in game.js and
+// add an entry here for every deploy with changes players would notice.
+// ---------------------------------------------------------------------------
+"use strict";
+
+const CHANGELOG = [
+  {
+    version: "0.4.0",
+    notes: [
+      "🏆 Tap your tier badge (Hamlet, Village, …) to see the next milestone",
+      "✨ Tap ✨ to see what appeal does and how to raise it",
+      "🚗 Traffic now grows with your roads – big towns get up to 60 cars",
+      "📰 This little \"What's new\" note, also in ⚙️ Settings",
+    ],
+  },
+  {
+    version: "0.3.3",
+    notes: [
+      "📱 iPhone Home Screen app: taps land where you tap, and the bottom bar fits the screen",
+    ],
+  },
+  {
+    version: "0.3.0",
+    notes: [
+      "🔑 New phone? Sign in with a 6-digit code from your email",
+      "🏆 The leaderboard shows each town once, starting at 10 people",
+    ],
+  },
+];
+
+// -1, 0 or 1, comparing "1.2.3"-style versions.
+function compareVersions(a, b) {
+  const pa = String(a).split(".").map(Number), pb = String(b).split(".").map(Number);
+  for (let i = 0; i < 3; i++) {
+    const d = (pa[i] || 0) - (pb[i] || 0);
+    if (d) return Math.sign(d);
+  }
+  return 0;
+}
