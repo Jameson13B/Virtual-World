@@ -228,9 +228,9 @@ const COLLECT_REACH = 190;
 class CollectorTruck extends TownCar {
   constructor(graph, shops, onCollect) {
     super(graph);
-    this.width = 32;
-    this.height = 58;
-    this.color = "#b7791f";
+    this.width = 40;
+    this.height = 72;
+    this.color = "#166534";
     this.maxSpeed = 3;
     this.onCollect = onCollect; // (lot) => called when the truck passes a shop
     this.stops = shops.map((lot) => ({ lot, seg: graph.segments[lot.segIndex] }));
@@ -272,13 +272,41 @@ class CollectorTruck extends TownCar {
     });
   }
 
+  // A dark green armored truck with gold trim, on a pulsing gold halo that
+  // grows as you zoom out so it's easy to spot on a big map.
   draw(ctx) {
+    const z = Math.max(1, (ctx.viewZoom || 1) * 0.8);
+    const pulse = (Math.sin(performance.now() / 250) + 1) / 2;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, (55 + 15 * pulse) * z, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(250, 204, 21, " + (0.18 + 0.12 * pulse) + ")";
+    ctx.fill();
+    ctx.lineWidth = 4 * z;
+    ctx.strokeStyle = "rgba(250, 204, 21, 0.9)";
+    ctx.stroke();
+
     super.draw(ctx);
     ctx.save();
-    ctx.font = "22px system-ui";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    uprightText(ctx, "💰", this.x, this.y);
+    ctx.translate(this.x, this.y);
+    ctx.rotate(-this.angle);
+    ctx.fillStyle = "#facc15";
+    ctx.fillRect(-this.width / 2, -4, this.width, 8); // gold stripe
     ctx.restore();
+
+    // Zoomed out, a big 🚚 badge marks it from across town.
+    if ((ctx.viewZoom || 1) > 2) {
+      const r = 24 * z;
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, r, 0, Math.PI * 2);
+      ctx.fillStyle = "#fff";
+      ctx.fill();
+      ctx.lineWidth = 3 * z;
+      ctx.strokeStyle = "#facc15";
+      ctx.stroke();
+      ctx.font = r * 1.2 + "px serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      uprightText(ctx, "🚚", this.x, this.y, 2 * z);
+    }
   }
 }

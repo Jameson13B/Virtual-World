@@ -6,6 +6,13 @@
 
 const CHANGELOG = [
   {
+    version: "0.6.1",
+    notes: [
+      "🏪 The market now restocks every 6 hours – check in more often for more materials",
+      "🚚 The collector is easier to spot: a green armored truck with a gold halo, and a 🚚 button that follows it",
+    ],
+  },
+  {
     version: "0.6.0",
     notes: [
       "🚚 Hire the collector in 🏪 Market: it drives past every shop and collects the 💰 for you (keeps 15%). Unlocks at Town",

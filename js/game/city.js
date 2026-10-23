@@ -46,6 +46,11 @@ function todayKey(d = new Date()) {
   return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
 }
 
+const MARKET_HOURS = 6;
+function marketPeriod(d = new Date()) {
+  return todayKey(d) + "/" + Math.floor(d.getHours() / MARKET_HOURS);
+}
+
 class City {
   constructor({ seed, name, graph = null }) {
     this.seed = seed;
@@ -60,7 +65,7 @@ class City {
     this.inventory = [];
     this.scanned = {};
     this.daily = { last: null, streak: 0 };
-    this.market = { day: null, bought: 0 }; // materials bought from the market today
+    this.market = { day: null, bought: 0 }; // materials bought this restock (`day` is the restock key)
     this.tierReached = 0;
     this.stats = { scans: 0, kinds: {}, collected: 0 };
     this.createdAt = Date.now();
@@ -269,18 +274,21 @@ class City {
     return true;
   }
 
-  // The market sells one road's worth of materials a day, so coins speed a
-  // town up without letting taxes snowball it on their own.
-  marketStock() {
-    const total = Math.max(10, Math.round(this.roadCost() / 10) * 10);
-    const bought = this.market.day === todayKey() ? this.market.bought : 0;
-    return { total, left: Math.max(0, total - bought) };
+  // The market restocks every 6 hours (midnight, 6am, noon, 6pm) with half a
+  // road's worth of materials, so coins speed a town up – more for players who
+  // check in often – without letting taxes snowball it on their own.
+  marketStock(now = new Date()) {
+    const total = Math.max(10, Math.round((this.roadCost() * 0.5) / 10) * 10);
+    const bought = this.market.day === marketPeriod(now) ? this.market.bought : 0;
+    const next = new Date(now);
+    next.setHours(Math.floor(now.getHours() / MARKET_HOURS) * MARKET_HOURS + MARKET_HOURS, 0, 0, 0);
+    return { total, left: Math.max(0, total - bought), restockIn: next - now };
   }
 
   buyMaterials(amount, price) {
     if (this.coins < price || amount > this.marketStock().left) return false;
-    const today = todayKey();
-    if (this.market.day !== today) this.market = { day: today, bought: 0 };
+    const period = marketPeriod();
+    if (this.market.day !== period) this.market = { day: period, bought: 0 };
     this.market.bought += amount;
     this.coins -= price;
     this.materials += amount;

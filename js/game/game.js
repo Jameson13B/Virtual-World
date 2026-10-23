@@ -6,7 +6,7 @@
 const $ = (sel) => document.querySelector(sel);
 const SAVE_KEY = "vw.city";
 const PREFS_KEY = "vw.gamePrefs";
-const VERSION = "0.6.0";
+const VERSION = "0.6.1";
 
 const canvas = $("#cityCanvas");
 const ctx = canvas.getContext("2d");
@@ -56,6 +56,10 @@ function saveGame() {
 }
 
 const fmt = (n) => (n >= 10000 ? (n / 1000).toFixed(n >= 100000 ? 0 : 1) + "k" : String(Math.floor(n)));
+const duration = (ms) => {
+  const m = Math.max(1, Math.ceil(ms / 60000));
+  return m >= 60 ? Math.floor(m / 60) + "h " + (m % 60) + "m" : m + "m";
+};
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 // ---------------------------------------------------------------------------
@@ -175,11 +179,19 @@ function updateTopbar() {
     }
   }
   $("#compassBtn").hidden = !viewport.angle;
+  const chip = $("#collectorChip");
+  chip.hidden = !ui.collector || !!visit;
+  if (ui.collector) chip.querySelector("b").textContent = ui.collector.truck.total - ui.collector.truck.stops.length + "/" + ui.collector.truck.total;
   $("#dailyBtn .dot").hidden = !city.dailyStatus().available;
   $("#itemsBtn .dot").hidden = !city.inventory.length;
 }
 
 $("#tierBadge").addEventListener("click", openMilestones);
+// Tap the 🚚 chip to fly to the collector and follow it (until you pan away).
+$("#collectorChip").addEventListener("click", () => {
+  if (ui.collector) ui.follow = ui.collector.truck;
+});
+
 // Twist with two fingers to rotate the map; the compass turns it back to north.
 $("#compassBtn").addEventListener("click", () => {
   viewport.angle = Math.atan2(Math.sin(viewport.angle), Math.cos(viewport.angle));
@@ -480,7 +492,7 @@ $("#dailyBtn").addEventListener("click", () => {
 
 $("#marketBtn").addEventListener("click", () => {
   if (visit) return;
-  // Bundles of a tenth, a third and all of today's stock; bigger bundles are cheaper.
+  // Bundles of a tenth, three tenths and all of the current stock; bigger bundles are cheaper.
   const stock = city.marketStock();
   const unit = Math.max(10, Math.round(stock.total / 100) * 10);
   const offers = [
@@ -492,8 +504,8 @@ $("#marketBtn").addEventListener("click", () => {
   const html =
     "<p>Trade coins for building materials. Scanning codes out in the world is much cheaper! 😉</p>" +
     "<div class='card'><div class='road-bar'><div class='fill' style='width:" + (stock.left / stock.total) * 100 + "%'></div>" +
-    "<span class='label'>Today's stock: " + stock.left + " / " + stock.total + " 🧱</span></div>" +
-    "<p class='muted'>" + (stock.left ? "The market restocks every day." : "Sold out – the market restocks tomorrow.") + "</p></div>" +
+    "<span class='label'>In stock: " + stock.left + " / " + stock.total + " 🧱</span></div>" +
+    "<p class='muted'>" + (stock.left ? "" : "Sold out – ") + "Restocks in " + duration(stock.restockIn) + ".</p></div>" +
     "<div class='list'>" + offers.map((o, i) =>
       "<div class='item-row'><span class='emoji'>🧱</span><div class='grow'><b>" + o.amount + " materials</b><small>" + o.price + " 💰</small></div>" +
       "<button data-offer='" + i + "' class='gold'" + (o.amount > stock.left ? " disabled" : "") + ">Buy</button></div>").join("") + "</div>" +
@@ -1110,7 +1122,7 @@ function updateTraffic(active) {
 // ---------------------------------------------------------------------------
 // Main loop
 // ---------------------------------------------------------------------------
-const touch = new TouchCamera(viewport, { onTap, onPan: () => (ui.unrotate = false) });
+const touch = new TouchCamera(viewport, { onTap, onPan: () => (ui.unrotate = ui.follow = null) });
 // iOS Home Screen apps can lay the page out shorter than the screen (by the
 // status bar's height), leaving a strip at the bottom that nothing can draw
 // into. Measure it so the CSS can paint it to match the bottom bar. Safari tabs
@@ -1136,6 +1148,13 @@ function loop(now) {
   const dt = Math.min(0.25, (now - last) / 1000);
   last = now;
   viewport.fit();
+  if (ui.follow) {
+    if (!ui.collector || ui.follow !== ui.collector.truck || visit) ui.follow = null;
+    else {
+      viewport.offset = lerp2D(viewport.offset, scale(ui.follow, -1), 0.1);
+      viewport.zoom += (Math.min(viewport.zoom, 1.6) - viewport.zoom) * 0.08;
+    }
+  }
   if (ui.unrotate) {
     viewport.angle *= 0.8;
     if (Math.abs(viewport.angle) < 0.005) [viewport.angle, ui.unrotate] = [0, false];

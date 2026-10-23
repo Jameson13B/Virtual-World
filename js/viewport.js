@@ -50,6 +50,7 @@ class Viewport {
     ctx.translate(this.center.x, this.center.y);
     ctx.rotate(this.angle);
     ctx.viewAngle = this.angle; // lets text be drawn upright on a rotated map
+    ctx.viewZoom = this.zoom; // and markers keep a readable size when zoomed out
     ctx.scale(1 / this.zoom, 1 / this.zoom);
     const offset = this.getOffset();
     ctx.translate(offset.x, offset.y);
