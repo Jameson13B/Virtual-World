@@ -6,6 +6,12 @@
 
 const CHANGELOG = [
   {
+    version: "0.6.2",
+    notes: [
+      "🚚🚚 Megalopolis towns hire two collectors at once – they start on opposite sides of town",
+    ],
+  },
+  {
     version: "0.6.1",
     notes: [
       "🏪 The market now restocks every 6 hours – check in more often for more materials",

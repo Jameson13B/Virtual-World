@@ -27,10 +27,10 @@ class TownCar extends Car {
     this.spawn();
   }
 
-  spawn() {
+  spawn(seg = null) {
     const segs = this.graph.segments;
     if (!segs.length) return;
-    const seg = segs[Math.floor(Math.random() * segs.length)];
+    seg = seg || segs[Math.floor(Math.random() * segs.length)];
     const [a, b] = Math.random() < 0.5 ? [seg.p1, seg.p2] : [seg.p2, seg.p1];
     this.#build([a, ...this.#route(a, b)]);
     const len = distance(a, b);
@@ -218,38 +218,48 @@ class TownCar extends Car {
 }
 
 // ---------------------------------------------------------------------------
-// The hired collector: an armored truck that drives down the road in front of
-// every shop once, emptying its 💰 bubble and keeping a cut.
+// The hired collector: an armored truck that drives past every shop once,
+// emptying its 💰 bubble and keeping a cut. Trucks hired together share one
+// set of shops still to visit (`pool`), so two trucks split the town.
 // ---------------------------------------------------------------------------
 const COLLECTOR_CUT = 0.15;
 // Far enough to reach the far end of a lot from the lane in front of it.
 const COLLECT_REACH = 190;
 
 class CollectorTruck extends TownCar {
-  constructor(graph, shops, onCollect) {
+  constructor(graph, pool, onCollect, start = null) {
     super(graph);
     this.width = 40;
     this.height = 72;
     this.color = "#166534";
     this.maxSpeed = 3;
     this.onCollect = onCollect; // (lot) => called when the truck passes a shop
-    this.stops = shops.map((lot) => ({ lot, seg: graph.segments[lot.segIndex] }));
-    this.total = this.stops.length;
+    this.pool = pool;
+    // Start on the road closest to `start` (e.g. one side of town).
+    if (start) {
+      let best = null, bestD = Infinity;
+      for (const seg of graph.segments) {
+        const d = distance(average(seg.p1, seg.p2), start);
+        if (d < bestD) [best, bestD] = [seg, d];
+      }
+      this.spawn(best);
+    }
   }
 
   get done() {
-    return !this.stops.length;
+    return !this.pool.size;
   }
 
   // Head for the nearest shop's road, then drive along it.
   destination(from, to) {
-    if (!this.stops || !this.stops.length) return null; // (not yet set while spawning)
+    if (!this.pool || !this.pool.size) return null; // (not yet set while spawning)
     let best = null, bestD = Infinity;
-    for (const st of this.stops) {
-      const d = Math.min(distance(to, st.seg.p1), distance(to, st.seg.p2));
-      if (d < bestD) [best, bestD] = [st, d];
+    for (const lot of this.pool) {
+      const seg = this.graph.segments[lot.segIndex];
+      const d = Math.min(distance(to, seg.p1), distance(to, seg.p2));
+      if (d < bestD) [best, bestD] = [seg, d];
     }
-    const { p1, p2 } = best.seg;
+    const { p1, p2 } = best;
     if (to === p1) return p2;
     if (to === p2) return p1;
     return distance(to, p1) <= distance(to, p2) ? p1 : p2;
@@ -265,11 +275,11 @@ class CollectorTruck extends TownCar {
 
   #collect() {
     // Any shop it drives close by counts, even one around the corner.
-    this.stops = this.stops.filter((st) => {
-      if (distance(this, st.lot.center) > COLLECT_REACH) return true;
-      this.onCollect(st.lot);
-      return false;
-    });
+    for (const lot of this.pool) {
+      if (distance(this, lot.center) > COLLECT_REACH) continue;
+      this.pool.delete(lot);
+      this.onCollect(lot);
+    }
   }
 
   // A dark green armored truck with gold trim, on a pulsing gold halo that

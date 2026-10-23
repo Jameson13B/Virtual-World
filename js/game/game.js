@@ -6,7 +6,7 @@
 const $ = (sel) => document.querySelector(sel);
 const SAVE_KEY = "vw.city";
 const PREFS_KEY = "vw.gamePrefs";
-const VERSION = "0.6.1";
+const VERSION = "0.6.2";
 
 const canvas = $("#cityCanvas");
 const ctx = canvas.getContext("2d");
@@ -181,15 +181,18 @@ function updateTopbar() {
   $("#compassBtn").hidden = !viewport.angle;
   const chip = $("#collectorChip");
   chip.hidden = !ui.collector || !!visit;
-  if (ui.collector) chip.querySelector("b").textContent = ui.collector.truck.total - ui.collector.truck.stops.length + "/" + ui.collector.truck.total;
+  if (ui.collector) chip.querySelector("b").textContent = ui.collector.total - ui.collector.pool.size + "/" + ui.collector.total;
   $("#dailyBtn .dot").hidden = !city.dailyStatus().available;
   $("#itemsBtn .dot").hidden = !city.inventory.length;
 }
 
 $("#tierBadge").addEventListener("click", openMilestones);
 // Tap the 🚚 chip to fly to the collector and follow it (until you pan away).
+// With two trucks, each tap switches to the other one.
 $("#collectorChip").addEventListener("click", () => {
-  if (ui.collector) ui.follow = ui.collector.truck;
+  if (!ui.collector) return;
+  const trucks = ui.collector.trucks;
+  ui.follow = trucks[(trucks.indexOf(ui.follow) + 1) % trucks.length];
 });
 
 // Twist with two fingers to rotate the map; the compass turns it back to north.
@@ -1038,27 +1041,41 @@ document.querySelectorAll("#dpad [data-ctl]").forEach((b) => {
 // Ambient traffic: more people, more cars
 // ---------------------------------------------------------------------------
 // The collector: drives past every shop once while the app is open and
-// collects its 💰 for you, keeping a 15% cut. Unlocks at Town.
+// collects its 💰 for you, keeping a 15% cut. Unlocks at Town; at Megalopolis
+// two trucks go out, starting on opposite sides of town.
 const COLLECTOR_TIER = 2;
+const TWO_TRUCK_TIER = 5;
 function collectorCard() {
   const c = ui.collector;
+  const two = city.tier >= TWO_TRUCK_TIER;
   let body;
   if (city.tier < COLLECTOR_TIER) {
     body = "<p class='muted'>Unlocks when your town reaches " + TIERS[COLLECTOR_TIER].icon + " " + TIERS[COLLECTOR_TIER].name + " (" + TIERS[COLLECTOR_TIER].pop + " people).</p>";
   } else if (c) {
-    body = "<p>On the road: " + (c.truck.total - c.truck.stops.length) + " of " + c.truck.total + " shops visited, +" + c.kept + " 💰 so far.</p>";
+    body = "<p>On the road: " + (c.total - c.pool.size) + " of " + c.total + " shops visited, +" + c.kept + " 💰 so far.</p>";
   } else {
-    body = "<p class='muted'>Drives past every shop once and collects its 💰 for you, keeping " + Math.round(COLLECTOR_CUT * 100) +
-      "% as a fee. Works while the app is open.</p><button id='hireBtn' class='gold'>Hire the collector</button>";
+    body = "<p class='muted'>" + (two ? "Two trucks start on opposite sides of town and drive" : "Drives") +
+      " past every shop once, collecting its 💰 for you and keeping " + Math.round(COLLECTOR_CUT * 100) + "% as a fee. Works while the app is open.</p>" +
+      (two ? "" : "<p class='muted'>" + TIERS[TWO_TRUCK_TIER].icon + " At " + TIERS[TWO_TRUCK_TIER].name + ", two trucks go out at once.</p>") +
+      "<button id='hireBtn' class='gold'>" + (two ? "Hire 2 collectors" : "Hire the collector") + "</button>";
   }
   return "<div class='card'><h3>🚚 Collector</h3>" + body + "</div>";
+}
+
+// The two ends of town along its longer side.
+function townEnds() {
+  const b = city.layout.bounds();
+  const mid = new Point((b.minX + b.maxX) / 2, (b.minY + b.maxY) / 2);
+  return b.maxX - b.minX >= b.maxY - b.minY
+    ? [new Point(b.minX, mid.y), new Point(b.maxX, mid.y)]
+    : [new Point(mid.x, b.minY), new Point(mid.x, b.maxY)];
 }
 
 function hireCollector() {
   const shops = city.lots.filter((l) => l.kind === "com");
   if (ui.collector || !shops.length || city.tier < COLLECTOR_TIER) return;
-  const c = { city, kept: 0, fee: 0, lastStop: performance.now() };
-  c.truck = new CollectorTruck(city.layout.graph, shops, (lot) => {
+  const c = { city, kept: 0, fee: 0, lastStop: performance.now(), pool: new Set(shops), total: shops.length };
+  const onCollect = (lot) => {
     c.lastStop = performance.now();
     const amount = Math.floor(lot.coins);
     if (amount < 1) return;
@@ -1069,9 +1086,11 @@ function hireCollector() {
     c.kept += keep;
     c.fee += amount - keep;
     floater(renderer.bubbleAnchor(lot, viewport.getViewPoint()), "+" + keep + " 💰");
-  });
+  };
+  const starts = city.tier >= TWO_TRUCK_TIER ? townEnds() : [null];
+  c.trucks = starts.map((start) => new CollectorTruck(city.layout.graph, c.pool, onCollect, start));
   ui.collector = c;
-  toast("🚚 The collector is on the way");
+  toast(c.trucks.length > 1 ? "🚚🚚 Two collectors are on the way" : "🚚 The collector is on the way");
 }
 
 function updateCollector() {
@@ -1079,15 +1098,17 @@ function updateCollector() {
   if (!c) return;
   if (c.city !== city) return (ui.collector = null); // a different town was loaded
   if (visit) return; // parked while you're away visiting
-  c.truck.update([...ui.cars, c.truck]);
+  const everyone = [...ui.cars, ...c.trucks];
+  for (const t of c.trucks) t.update(everyone);
   // Done, or stuck for 90 s without reaching a shop: send the bill.
-  if (c.truck.done || performance.now() - c.lastStop > 90000) {
+  if (!c.pool.size || performance.now() - c.lastStop > 90000) {
     ui.collector = null;
     saveGame();
     showModal({
       icon: "🚚",
       title: "Collection done",
-      body: "<div class='gains'><span class='gain'>+" + c.kept + " 💰</span></div><p class='muted'>The collector kept " + c.fee + " 💰 as their fee.</p>",
+      body: "<div class='gains'><span class='gain'>+" + c.kept + " 💰</span></div><p class='muted'>" +
+        (c.trucks.length > 1 ? "The collectors kept " : "The collector kept ") + c.fee + " 💰 as their fee.</p>",
       button: "Thanks!",
     });
   }
@@ -1114,7 +1135,7 @@ function updateTraffic(active) {
   }
   const everyone = [...ui.cars];
   if (ui.drive) everyone.push(ui.drive);
-  if (ui.collector && !visit) everyone.push(ui.collector.truck);
+  if (ui.collector && !visit) everyone.push(...ui.collector.trucks);
   for (const car of ui.cars) car.update(everyone);
   updateCollector();
 }
@@ -1149,7 +1170,7 @@ function loop(now) {
   last = now;
   viewport.fit();
   if (ui.follow) {
-    if (!ui.collector || ui.follow !== ui.collector.truck || visit) ui.follow = null;
+    if (!ui.collector || !ui.collector.trucks.includes(ui.follow) || visit) ui.follow = null;
     else {
       viewport.offset = lerp2D(viewport.offset, scale(ui.follow, -1), 0.1);
       viewport.zoom += (Math.min(viewport.zoom, 1.6) - viewport.zoom) * 0.08;
@@ -1183,7 +1204,7 @@ function loop(now) {
   active.renderer.draw(ctx, viewport, {
     placing: !!ui.placing,
     selected: ui.selected,
-    cars: ui.collector && !visit ? [...ui.cars, ui.collector.truck] : ui.cars,
+    cars: ui.collector && !visit ? [...ui.cars, ...ui.collector.trucks] : ui.cars,
     player: ui.drive,
     floaters: ui.floaters,
     now,
