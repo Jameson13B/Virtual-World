@@ -42,6 +42,11 @@ class TownCar extends Car {
   // Next stretch of road from `to`, arriving from `from`. Avoids turning
   // around unless the road is a dead end.
   #route(from, to) {
+    const goal = this.destination(from, to);
+    if (goal) {
+      const path = this.graph.getShortestPath(to, goal);
+      if (path.length >= 2) return path;
+    }
     const pts = this.graph.points;
     const dead = this.graph.segments.filter((s) => s.includes(to)).length <= 1;
     let best = null;
@@ -54,6 +59,11 @@ class TownCar extends Car {
       best = best || path;
     }
     return best || [to, from];
+  }
+
+  // Subclasses can steer: return a graph point to drive to next (else random).
+  destination(from, to) {
+    return null;
   }
 
   // Builds the lane line through this.nodes and resets s to its start.
@@ -204,5 +214,71 @@ class TownCar extends Car {
     this.speed = this.speed < target ? Math.min(target, this.speed + 0.05) : Math.max(target, this.speed - 0.18);
     this.s += this.speed;
     this.#place();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The hired collector: an armored truck that drives down the road in front of
+// every shop once, emptying its 💰 bubble and keeping a cut.
+// ---------------------------------------------------------------------------
+const COLLECTOR_CUT = 0.15;
+// Far enough to reach the far end of a lot from the lane in front of it.
+const COLLECT_REACH = 190;
+
+class CollectorTruck extends TownCar {
+  constructor(graph, shops, onCollect) {
+    super(graph);
+    this.width = 32;
+    this.height = 58;
+    this.color = "#b7791f";
+    this.maxSpeed = 3;
+    this.onCollect = onCollect; // (lot) => called when the truck passes a shop
+    this.stops = shops.map((lot) => ({ lot, seg: graph.segments[lot.segIndex] }));
+    this.total = this.stops.length;
+  }
+
+  get done() {
+    return !this.stops.length;
+  }
+
+  // Head for the nearest shop's road, then drive along it.
+  destination(from, to) {
+    if (!this.stops || !this.stops.length) return null; // (not yet set while spawning)
+    let best = null, bestD = Infinity;
+    for (const st of this.stops) {
+      const d = Math.min(distance(to, st.seg.p1), distance(to, st.seg.p2));
+      if (d < bestD) [best, bestD] = [st, d];
+    }
+    const { p1, p2 } = best.seg;
+    if (to === p1) return p2;
+    if (to === p2) return p1;
+    return distance(to, p1) <= distance(to, p2) ? p1 : p2;
+  }
+
+  // Moves twice per frame: it's in a hurry, corners included.
+  update(others) {
+    super.update(others);
+    this.#collect();
+    super.update(others);
+    this.#collect();
+  }
+
+  #collect() {
+    // Any shop it drives close by counts, even one around the corner.
+    this.stops = this.stops.filter((st) => {
+      if (distance(this, st.lot.center) > COLLECT_REACH) return true;
+      this.onCollect(st.lot);
+      return false;
+    });
+  }
+
+  draw(ctx) {
+    super.draw(ctx);
+    ctx.save();
+    ctx.font = "22px system-ui";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    uprightText(ctx, "💰", this.x, this.y);
+    ctx.restore();
   }
 }

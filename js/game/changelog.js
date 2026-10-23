@@ -6,6 +6,13 @@
 
 const CHANGELOG = [
   {
+    version: "0.6.0",
+    notes: [
+      "🚚 Hire the collector in 🏪 Market: it drives past every shop and collects the 💰 for you (keeps 15%). Unlocks at Town",
+      "🔄 Twist with two fingers to rotate the map – tap 🧭 to point north again",
+    ],
+  },
+  {
     version: "0.5.0",
     notes: [
       "⚖️ Steadier growth: people move in more gradually, and each new road costs a bit more than the last",

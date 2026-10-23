@@ -6,7 +6,7 @@
 const $ = (sel) => document.querySelector(sel);
 const SAVE_KEY = "vw.city";
 const PREFS_KEY = "vw.gamePrefs";
-const VERSION = "0.5.0";
+const VERSION = "0.6.0";
 
 const canvas = $("#cityCanvas");
 const ctx = canvas.getContext("2d");
@@ -21,7 +21,7 @@ let city = null;
 let renderer = null;
 let visit = null; // { city, renderer } while looking at someone else's town
 const online = new Online(window.VW_CONFIG);
-const ui = { placing: null, selected: null, floaters: [], cars: [], drive: null, follow: null };
+const ui = { placing: null, selected: null, floaters: [], cars: [], drive: null, follow: null, collector: null };
 
 function readJSON(key, fallback = null) {
   try {
@@ -174,11 +174,17 @@ function updateTopbar() {
       bar.querySelector(".label").textContent = "🛣️ Next road: " + Math.floor(city.materials) + " / " + cost + " 🧱";
     }
   }
+  $("#compassBtn").hidden = !viewport.angle;
   $("#dailyBtn .dot").hidden = !city.dailyStatus().available;
   $("#itemsBtn .dot").hidden = !city.inventory.length;
 }
 
 $("#tierBadge").addEventListener("click", openMilestones);
+// Twist with two fingers to rotate the map; the compass turns it back to north.
+$("#compassBtn").addEventListener("click", () => {
+  viewport.angle = Math.atan2(Math.sin(viewport.angle), Math.cos(viewport.angle));
+  ui.unrotate = true;
+});
 $("#appealChip").addEventListener("click", openAppeal);
 
 // Every tier, with progress toward the next one.
@@ -491,6 +497,7 @@ $("#marketBtn").addEventListener("click", () => {
     "<div class='list'>" + offers.map((o, i) =>
       "<div class='item-row'><span class='emoji'>🧱</span><div class='grow'><b>" + o.amount + " materials</b><small>" + o.price + " 💰</small></div>" +
       "<button data-offer='" + i + "' class='gold'" + (o.amount > stock.left ? " disabled" : "") + ">Buy</button></div>").join("") + "</div>" +
+    collectorCard() +
     "<div class='card'><h3>📈 Your economy</h3><div class='stat-grid'>" +
     "<div class='stat'><b>" + fmt(city.capacity) + "</b><span>🏠 housing</span></div>" +
     "<div class='stat'><b>" + fmt(city.jobs) + "</b><span>💼 jobs</span></div>" +
@@ -498,6 +505,11 @@ $("#marketBtn").addEventListener("click", () => {
     "<div class='stat'><b>" + city.lots.filter((l) => !l.kind).length + "</b><span>🟩 empty lots</span></div>" +
     "</div><p class='muted'>Shops earn 💰 – tap the bubbles above them to collect. Taxes from residents trickle in automatically.</p></div>";
   openSheet("🏪 Market", html, (body) => {
+    const hire = body.querySelector("#hireBtn");
+    if (hire) hire.addEventListener("click", () => {
+      hireCollector();
+      $("#marketBtn").click();
+    });
     body.querySelectorAll("[data-offer]").forEach((b) =>
       b.addEventListener("click", () => {
         const o = offers[+b.dataset.offer];
@@ -1013,6 +1025,62 @@ document.querySelectorAll("#dpad [data-ctl]").forEach((b) => {
 // ---------------------------------------------------------------------------
 // Ambient traffic: more people, more cars
 // ---------------------------------------------------------------------------
+// The collector: drives past every shop once while the app is open and
+// collects its 💰 for you, keeping a 15% cut. Unlocks at Town.
+const COLLECTOR_TIER = 2;
+function collectorCard() {
+  const c = ui.collector;
+  let body;
+  if (city.tier < COLLECTOR_TIER) {
+    body = "<p class='muted'>Unlocks when your town reaches " + TIERS[COLLECTOR_TIER].icon + " " + TIERS[COLLECTOR_TIER].name + " (" + TIERS[COLLECTOR_TIER].pop + " people).</p>";
+  } else if (c) {
+    body = "<p>On the road: " + (c.truck.total - c.truck.stops.length) + " of " + c.truck.total + " shops visited, +" + c.kept + " 💰 so far.</p>";
+  } else {
+    body = "<p class='muted'>Drives past every shop once and collects its 💰 for you, keeping " + Math.round(COLLECTOR_CUT * 100) +
+      "% as a fee. Works while the app is open.</p><button id='hireBtn' class='gold'>Hire the collector</button>";
+  }
+  return "<div class='card'><h3>🚚 Collector</h3>" + body + "</div>";
+}
+
+function hireCollector() {
+  const shops = city.lots.filter((l) => l.kind === "com");
+  if (ui.collector || !shops.length || city.tier < COLLECTOR_TIER) return;
+  const c = { city, kept: 0, fee: 0, lastStop: performance.now() };
+  c.truck = new CollectorTruck(city.layout.graph, shops, (lot) => {
+    c.lastStop = performance.now();
+    const amount = Math.floor(lot.coins);
+    if (amount < 1) return;
+    const keep = Math.round(amount * (1 - COLLECTOR_CUT));
+    lot.coins -= amount;
+    city.coins += keep;
+    city.stats.collected += keep;
+    c.kept += keep;
+    c.fee += amount - keep;
+    floater(renderer.bubbleAnchor(lot, viewport.getViewPoint()), "+" + keep + " 💰");
+  });
+  ui.collector = c;
+  toast("🚚 The collector is on the way");
+}
+
+function updateCollector() {
+  const c = ui.collector;
+  if (!c) return;
+  if (c.city !== city) return (ui.collector = null); // a different town was loaded
+  if (visit) return; // parked while you're away visiting
+  c.truck.update([...ui.cars, c.truck]);
+  // Done, or stuck for 90 s without reaching a shop: send the bill.
+  if (c.truck.done || performance.now() - c.lastStop > 90000) {
+    ui.collector = null;
+    saveGame();
+    showModal({
+      icon: "🚚",
+      title: "Collection done",
+      body: "<div class='gains'><span class='gain'>+" + c.kept + " 💰</span></div><p class='muted'>The collector kept " + c.fee + " 💰 as their fee.</p>",
+      button: "Thanks!",
+    });
+  }
+}
+
 // One car per 6 people, but no more than the roads can comfortably hold
 // (one per 250 units of road), and at most 60 so phones stay smooth.
 function roadLength(c) {
@@ -1032,14 +1100,17 @@ function updateTraffic(active) {
     for (let i = 0; i < 5 && ui.cars.some((o) => distance(o, car) < 80); i++) car.spawn();
     if (!ui.cars.some((o) => distance(o, car) < 80)) ui.cars.push(car);
   }
-  const everyone = ui.drive ? [...ui.cars, ui.drive] : ui.cars;
+  const everyone = [...ui.cars];
+  if (ui.drive) everyone.push(ui.drive);
+  if (ui.collector && !visit) everyone.push(ui.collector.truck);
   for (const car of ui.cars) car.update(everyone);
+  updateCollector();
 }
 
 // ---------------------------------------------------------------------------
 // Main loop
 // ---------------------------------------------------------------------------
-const touch = new TouchCamera(viewport, { onTap });
+const touch = new TouchCamera(viewport, { onTap, onPan: () => (ui.unrotate = false) });
 // iOS Home Screen apps can lay the page out shorter than the screen (by the
 // status bar's height), leaving a strip at the bottom that nothing can draw
 // into. Measure it so the CSS can paint it to match the bottom bar. Safari tabs
@@ -1065,6 +1136,10 @@ function loop(now) {
   const dt = Math.min(0.25, (now - last) / 1000);
   last = now;
   viewport.fit();
+  if (ui.unrotate) {
+    viewport.angle *= 0.8;
+    if (Math.abs(viewport.angle) < 0.005) [viewport.angle, ui.unrotate] = [0, false];
+  }
 
   handleEvents(city.tick(dt));
   const active = visit || { city, renderer };
@@ -1089,7 +1164,7 @@ function loop(now) {
   active.renderer.draw(ctx, viewport, {
     placing: !!ui.placing,
     selected: ui.selected,
-    cars: ui.cars,
+    cars: ui.collector && !visit ? [...ui.cars, ui.collector.truck] : ui.cars,
     player: ui.drive,
     floaters: ui.floaters,
     now,

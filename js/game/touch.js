@@ -22,8 +22,7 @@ class TouchCamera {
   }
 
   toWorld(screen) {
-    const v = this.viewport;
-    return new Point((screen.x - v.center.x) * v.zoom - v.offset.x, (screen.y - v.center.y) * v.zoom - v.offset.y);
+    return this.viewport.toWorld(screen);
   }
 
   #startGesture() {
@@ -37,6 +36,9 @@ class TouchCamera {
         type: "pinch",
         dist: Math.max(10, distance(pts[0], pts[1])),
         zoom: v.zoom,
+        twist: Math.atan2(pts[1].y - pts[0].y, pts[1].x - pts[0].x),
+        angle: v.angle,
+        rotating: false,
         worldMid: this.toWorld(mid),
         moved: true,
       };
@@ -63,11 +65,20 @@ class TouchCamera {
         g.moved = true;
         this.onPan();
       }
-      if (g.moved) v.offset = add(g.offset, scale(d, v.zoom));
+      if (g.moved) v.offset = add(g.offset, v.toWorldVector(d));
     } else if (g.type === "pinch" && pts.length >= 2) {
       const mid = average(pts[0], pts[1]);
       v.zoom = clamp((g.zoom * g.dist) / Math.max(10, distance(pts[0], pts[1])), v.minZoom, v.maxZoom);
-      v.offset = new Point((mid.x - v.center.x) * v.zoom - g.worldMid.x, (mid.y - v.center.y) * v.zoom - g.worldMid.y);
+      // Rotation kicks in only after a deliberate twist, so pinching stays steady.
+      let twist = Math.atan2(pts[1].y - pts[0].y, pts[1].x - pts[0].x) - g.twist;
+      twist = Math.atan2(Math.sin(twist), Math.cos(twist));
+      if (!g.rotating && Math.abs(twist) > 0.2) {
+        g.rotating = true;
+        g.twist += twist;
+        twist = 0;
+      }
+      if (g.rotating) v.angle = g.angle + twist;
+      v.offset = subtract(v.toWorldVector(subtract(mid, v.center)), g.worldMid);
       this.onPan();
     }
   }

@@ -1,3 +1,14 @@
+// Text and emoji stay upright when the map is rotated: draws `text` at world
+// (x, y), shifted `dy` pixels-in-world straight up the screen.
+function uprightText(ctx, text, x, y, dy = 0, stroke = false) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(-(ctx.viewAngle || 0));
+  if (stroke) ctx.strokeText(text, 0, dy);
+  ctx.fillText(text, 0, dy);
+  ctx.restore();
+}
+
 // Flat-roofed building (shops, offices, civic buildings).
 class Shop {
   constructor(poly, height, roof, { icon = null, walls = "#f4f1ea" } = {}) {
@@ -25,7 +36,7 @@ class Shop {
       ctx.font = "56px serif";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText(this.icon, c.x, c.y);
+      uprightText(ctx, this.icon, c.x, c.y);
     }
   }
 }
@@ -144,7 +155,7 @@ class CityRenderer {
       ctx.font = 40 * Math.max(1, z * 0.7) + "px serif";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText("🚧", head.x, head.y);
+      uprightText(ctx, "🚧", head.x, head.y);
     }
 
     // roads
@@ -235,10 +246,8 @@ class CityRenderer {
       ctx.textAlign = "center";
       ctx.lineWidth = 5 * Math.max(1, z * 0.8);
       ctx.strokeStyle = "rgba(0,0,0,0.6)";
-      const y = f.y - f.age * 60 * Math.max(1, z * 0.8);
-      ctx.strokeText(f.text, f.x, y);
       ctx.fillStyle = f.color || "#fde047";
-      ctx.fillText(f.text, f.x, y);
+      uprightText(ctx, f.text, f.x, f.y, -f.age * 60 * Math.max(1, z * 0.8), true);
       ctx.globalAlpha = 1;
     }
   }
@@ -260,8 +269,11 @@ class CityRenderer {
     }
     const bob = Math.sin(now / 300 + lot.id) * 4 * z;
     const r = 22 * Math.max(1, z * 0.75);
+    ctx.save();
+    ctx.translate(p.x, p.y);
+    ctx.rotate(-(ctx.viewAngle || 0)); // bob straight up the screen
     ctx.beginPath();
-    ctx.arc(p.x, p.y + bob, r, 0, Math.PI * 2);
+    ctx.arc(0, bob, r, 0, Math.PI * 2);
     ctx.fillStyle = "rgba(255,255,255,0.95)";
     ctx.fill();
     ctx.lineWidth = 3 * Math.max(1, z * 0.6);
@@ -270,7 +282,8 @@ class CityRenderer {
     ctx.font = r * 1.1 + "px serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText("💰", p.x, p.y + bob + 1);
+    ctx.fillText("💰", 0, bob + 1);
+    ctx.restore();
   }
 
   #drawLotGround(ctx, lot, placing, now, z) {
@@ -280,7 +293,7 @@ class CityRenderer {
       ctx.font = 50 * Math.max(1, z * 0.5) + "px serif";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText("🏗️", lot.center.x, lot.center.y);
+      uprightText(ctx, "🏗️", lot.center.x, lot.center.y);
       return;
     }
     if (empty) {
@@ -303,7 +316,7 @@ class CityRenderer {
         ctx.font = "64px serif";
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        ctx.fillText(spec.icon, lot.center.x, lot.center.y);
+        uprightText(ctx, spec.icon, lot.center.x, lot.center.y);
       }
     } else if (lot.kind === "res") {
       lot.poly.draw(ctx, { fill: "#6fae5a", stroke: "rgba(0,0,0,0)", lineWidth: 0 }); // garden

@@ -7,6 +7,7 @@ class Viewport {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d");
     this.zoom = zoom;
+    this.angle = 0; // map rotation in radians (the town game's two-finger twist)
     this.minZoom = 0.15;
     this.maxZoom = 120;
     this.center = new Point(0, 0);
@@ -47,17 +48,26 @@ class Viewport {
     ctx.fillStyle = background;
     ctx.fillRect(0, 0, this.width, this.height);
     ctx.translate(this.center.x, this.center.y);
+    ctx.rotate(this.angle);
+    ctx.viewAngle = this.angle; // lets text be drawn upright on a rotated map
     ctx.scale(1 / this.zoom, 1 / this.zoom);
     const offset = this.getOffset();
     ctx.translate(offset.x, offset.y);
   }
 
   getMouse(evt, subtractDragOffset = false) {
-    const p = new Point(
-      (evt.offsetX - this.center.x) * this.zoom - this.offset.x,
-      (evt.offsetY - this.center.y) * this.zoom - this.offset.y
-    );
+    const p = this.toWorld(new Point(evt.offsetX, evt.offsetY));
     return subtractDragOffset ? subtract(p, this.drag.offset) : p;
+  }
+
+  // Screen pixels → world point, and a screen-space vector → world vector.
+  toWorld(screen) {
+    return subtract(this.toWorldVector(subtract(screen, this.center)), this.offset);
+  }
+
+  toWorldVector(v) {
+    const c = Math.cos(this.angle), s = Math.sin(this.angle);
+    return new Point((v.x * c + v.y * s) * this.zoom, (-v.x * s + v.y * c) * this.zoom);
   }
 
   getOffset() {
@@ -71,12 +81,11 @@ class Viewport {
 
   getVisibleBounds() {
     const off = this.getOffset();
-    return {
-      minX: -this.center.x * this.zoom - off.x,
-      minY: -this.center.y * this.zoom - off.y,
-      maxX: this.center.x * this.zoom - off.x,
-      maxY: this.center.y * this.zoom - off.y,
-    };
+    // Bounding box of the (possibly rotated) screen rectangle.
+    const c = Math.abs(Math.cos(this.angle)), s = Math.abs(Math.sin(this.angle));
+    const hw = this.center.x * this.zoom, hh = this.center.y * this.zoom;
+    const w = hw * c + hh * s, h = hw * s + hh * c;
+    return { minX: -w - off.x, minY: -h - off.y, maxX: w - off.x, maxY: h - off.y };
   }
 
   lookAt(point) {
