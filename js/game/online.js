@@ -6,11 +6,17 @@
 "use strict";
 
 const HANDLE_RE = /^[a-z0-9_]{3,16}$/;
-const PROFILE_COLS = "id, handle, city_name, pop, tier, roads, scans, updated_at";
+const PROFILE_COLS = "id, handle, city_name, seed, pop, tier, roads, scans, updated_at";
+const LEADERBOARD_MIN_POP = 10; // towns join the leaderboard at Village
+const LEADERBOARD_DAYS = 30; // and drop off after this long without playing
 
 class Online {
   constructor(config = {}) {
     this.enabled = !!(config.supabaseUrl && config.supabaseAnonKey && window.supabase);
+    this.config = config;
+    // Remember this phone's silent account before the client starts: an email
+    // sign-in link replaces it, and we want to retire it afterwards.
+    this.previous = this.enabled ? Online.#storedSession(config.supabaseUrl) : null;
     this.sb = this.enabled
       ? window.supabase.createClient(config.supabaseUrl, config.supabaseAnonKey, {
           auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
@@ -47,6 +53,9 @@ class Online {
         user = res.data.user;
       }
       await this.#setUser(user);
+      // Only when the phone moved to an email account, never on a plain restart.
+      if (this.previous && this.previous.user.id !== user.id && !user.is_anonymous) this.#retire(this.previous);
+      this.previous = null;
       if (!this.listening) {
         this.listening = true;
         this.sb.auth.onAuthStateChange((event, session) => {
@@ -60,6 +69,33 @@ class Online {
     } catch (e) {
       console.warn("Online features unavailable:", e.message || e);
       return false;
+    }
+  }
+
+  static #storedSession(url) {
+    try {
+      const key = "sb-" + new URL(url).hostname.split(".")[0] + "-auth-token";
+      const s = JSON.parse(localStorage.getItem(key));
+      return s && s.user && s.user.is_anonymous && s.refresh_token ? s : null;
+    } catch {
+      return null;
+    }
+  }
+
+  // After this phone moves from its silent account to an email account, delete
+  // the silent account's leaderboard card and save so the town isn't listed twice.
+  async #retire(session) {
+    try {
+      const tmp = window.supabase.createClient(this.config.supabaseUrl, this.config.supabaseAnonKey, {
+        auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false, storageKey: "vw-retire" },
+      });
+      const { error } = await tmp.auth.setSession({ access_token: session.access_token, refresh_token: session.refresh_token });
+      if (error) return;
+      const id = session.user.id;
+      await Promise.all([tmp.from("profiles").delete().eq("id", id), tmp.from("saves").delete().eq("user_id", id)]);
+      await tmp.auth.signOut();
+    } catch (e) {
+      console.warn("Couldn't retire the old account:", e.message || e);
     }
   }
 
@@ -118,14 +154,33 @@ class Online {
     }
   }
 
-  // Pushes the public town card and the private full save.
+  // Pushes the public town card and the private full save. Towns join the
+  // leaderboard once they reach Village; a new town below that leaves it.
   async publish(city) {
     if (!this.ready) return;
-    if (!this.profile || !Online.handleMatches(this.profile.handle, city.name)) await this.#claimTownHandle(city);
+    if (city.pop < LEADERBOARD_MIN_POP) {
+      if (this.profile) {
+        await this.sb.from("profiles").delete().eq("id", this.user.id);
+        this.profile = null;
+      }
+    } else if (!this.profile || !Online.handleMatches(this.profile.handle, city.name)) {
+      await this.#claimTownHandle(city);
+    } else if (this.profile.handle !== Online.normalizeHandle(city.name)) {
+      await this.#tryPlainHandle(city);
+    }
     const jobs = [this.sb.from("saves").upsert({ user_id: this.user.id, data: city.toSave(), pop: Math.floor(city.pop) })];
     if (this.profile) jobs.push(this.sb.from("profiles").update(this.#cardFor(city)).eq("id", this.user.id));
     const results = await Promise.all(jobs);
     for (const r of results) if (r.error) console.warn("Sync failed:", r.error.message);
+  }
+
+  // A town that had to take a number (brightford7) gets the plain name once it's free.
+  async #tryPlainHandle(city) {
+    const base = Online.normalizeHandle(city.name);
+    const { data } = await this.sb.from("profiles").select("id").eq("handle", base).maybeSingle();
+    if (data) return;
+    const res = await this.sb.from("profiles").update({ handle: base }).eq("id", this.user.id).select(PROFILE_COLS).single();
+    if (!res.error) this.profile = res.data;
   }
 
   async cloudSave() {
@@ -134,14 +189,36 @@ class Online {
     return data || null;
   }
 
+  static #since() {
+    return new Date(Date.now() - LEADERBOARD_DAYS * 86400000).toISOString();
+  }
+
+  // Active towns, biggest first, with any leftover copies of the same town
+  // (same seed) collapsed into the most recently played one.
   async leaderboard(limit = 50) {
-    const { data, error } = await this.sb.from("profiles").select(PROFILE_COLS).order("pop", { ascending: false }).limit(limit);
+    const { data, error } = await this.sb
+      .from("profiles")
+      .select(PROFILE_COLS)
+      .gte("pop", LEADERBOARD_MIN_POP)
+      .gt("updated_at", Online.#since())
+      .order("pop", { ascending: false })
+      .limit(limit * 2);
     if (error) throw error;
-    return data;
+    const newest = new Map();
+    for (const t of data) {
+      const seen = newest.get(t.seed);
+      if (!seen || t.updated_at > seen.updated_at || (this.user && t.id === this.user.id)) newest.set(t.seed, t);
+    }
+    return data.filter((t) => newest.get(t.seed) === t).slice(0, limit);
   }
 
   async myRank(pop) {
-    const { count, error } = await this.sb.from("profiles").select("id", { count: "exact", head: true }).gt("pop", Math.floor(pop));
+    if (pop < LEADERBOARD_MIN_POP) return null;
+    const { count, error } = await this.sb
+      .from("profiles")
+      .select("id", { count: "exact", head: true })
+      .gt("pop", Math.floor(pop))
+      .gt("updated_at", Online.#since());
     return error ? null : count + 1;
   }
 
@@ -158,7 +235,7 @@ class Online {
   // Returns null on success, or a message for the player.
   async follow(raw) {
     const handle = Online.normalizeHandle(raw);
-    if (!this.profile) return "Still joining the leaderboard – try again in a moment";
+    if (!this.profile) return "Your town joins at " + LEADERBOARD_MIN_POP + " people – then you can add friends";
     if (handle === this.profile.handle) return "That's you! 😄";
     const { data } = await this.sb.from("profiles").select("id").eq("handle", handle).maybeSingle();
     if (!data) return "No town called " + raw.trim();
@@ -194,6 +271,14 @@ class Online {
     return error ? error.message : null;
   }
 
+  // Confirms the email with the code from the email instead of its link.
+  async verifyLinkCode(email, token) {
+    const { data, error } = await this.sb.auth.verifyOtp({ email, token, type: "email_change" });
+    if (error) return error.message;
+    if (data.user) await this.#setUser(data.user);
+    return null;
+  }
+
   async sendLoginCode(email) {
     const { error } = await this.sb.auth.signInWithOtp({
       email,
@@ -203,9 +288,11 @@ class Online {
   }
 
   async verifyLoginCode(email, token) {
+    const before = (await this.sb.auth.getSession()).data.session;
     const { data, error } = await this.sb.auth.verifyOtp({ email, token, type: "email" });
     if (error) return error.message;
     await this.#setUser(data.user);
+    if (before && before.user.is_anonymous && before.user.id !== data.user.id) this.#retire(before);
     return null;
   }
 

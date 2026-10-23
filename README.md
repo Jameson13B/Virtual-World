@@ -43,7 +43,7 @@ Without `js/game/config.js` filled in, everything works offline and the online f
 
 **1. Supabase (accounts, leaderboard, friends, cloud saves)** – free tier is plenty.
 1. Create a project at [supabase.com](https://supabase.com).
-2. **SQL Editor** → paste all of `supabase/schema.sql` → **Run**.
+2. **SQL Editor** → paste all of `supabase/schema.sql` → **Run**. (Already set up? Run any new files in `supabase/migrations/` in order instead.)
 3. **Authentication → Sign In / Providers** → turn on **Allow anonymous sign-ins** (Email stays on).
 4. *(Optional, needs custom SMTP)* **Authentication → Emails → Magic link** → add `Your code: {{ .Token }}`, so players switching phones can type a code. Without it, players tap the **Sign in** link in the email instead, which works fine.
 5. **Project Settings → API** → copy the **Project URL** and the **anon / publishable key** into `js/game/config.js`. The anon key is designed to be public; the row level security in `schema.sql` is what protects the data.

@@ -202,7 +202,7 @@ button.big { width: 100%; padding: 14px; font-size: 17px; }
 .stat { background: var(--surface); border-radius: 12px; padding: 10px; text-align: center; }
 .stat b { display: block; font-size: 20px; }
 .stat span { color: var(--muted); font-size: 12px; }
-input[type="text"], textarea {
+input[type="text"], input[type="email"], textarea {
   width: 100%;
   font: inherit;
   color: var(--text);
@@ -222,6 +222,8 @@ textarea { font-family: ui-monospace, monospace; font-size: 12px; min-height: 80
 .town-row.me { outline: 2px solid #facc15; }
 button.small { padding: 6px 10px; min-height: 0; }
 button.ghost { background: transparent; }
+#modalExtra { margin-top: 12px; }
+#modalBody + #modalOk { margin-top: 8px; }
 .version { text-align: center; color: var(--muted); font-size: 12px; margin-top: 16px; padding: 8px; }
 .extras { border-color: #a855f7; }
 

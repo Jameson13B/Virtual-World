@@ -6,7 +6,7 @@
 const $ = (sel) => document.querySelector(sel);
 const SAVE_KEY = "vw.city";
 const PREFS_KEY = "vw.gamePrefs";
-const VERSION = "0.2.0";
+const VERSION = "0.3.0";
 
 const canvas = $("#cityCanvas");
 const ctx = canvas.getContext("2d");
@@ -71,8 +71,8 @@ function toast(msg, ms = 2400) {
 }
 
 const modalQueue = [];
-function showModal({ icon, title, body = "", button = "Nice!", onClose = null }) {
-  modalQueue.push({ icon, title, body, button, onClose });
+function showModal({ icon, title, body = "", button = "Nice!", onClose = null, extra = null }) {
+  modalQueue.push({ icon, title, body, button, onClose, extra });
   if (modalQueue.length === 1) renderModal();
 }
 function renderModal() {
@@ -80,10 +80,17 @@ function renderModal() {
   if (!m) return ($("#modalBackdrop").hidden = true);
   $("#modalIcon").textContent = m.icon;
   $("#modalTitle").textContent = m.title;
-  $("#modalBody").innerHTML = m.body;
+  $("#modalBody").innerHTML = m.body + (m.extra ? "<button id='modalExtra' class='ghost big'>" + esc(m.extra.label) + "</button>" : "");
   $("#modalOk").textContent = m.button;
   $("#modalBackdrop").hidden = false;
 }
+// The optional second button closes the modal without its onClose and runs its own action.
+$("#modalBody").addEventListener("click", (e) => {
+  if (e.target.id !== "modalExtra") return;
+  const m = modalQueue.shift();
+  renderModal();
+  m.extra.onClick();
+});
 $("#modalOk").addEventListener("click", () => {
   const m = modalQueue.shift();
   if (m && m.onClose) m.onClose();
@@ -506,10 +513,13 @@ function openSocial(tab = "top") {
     html += visitByLinkCard() + "<p class='muted' style='text-align:center'>🏆 Leaderboards &amp; friends turn on once the game is online.</p>";
   } else if (!online.ready) {
     html += "<p class='muted' style='text-align:center'>📡 Can't reach the server right now – leaderboards will be back when you're online.</p>" + visitByLinkCard();
-  } else if (!online.handle) {
-    html += "<p class='muted' style='text-align:center'>🏆 Joining the leaderboard as <b>" + esc(city.name) + "</b>…</p>" + visitByLinkCard();
-    syncOnline(true);
   } else {
+    if (!online.handle) {
+      html += city.pop < LEADERBOARD_MIN_POP
+        ? "<p class='muted' style='text-align:center'>🏆 Your town joins the leaderboard at " + LEADERBOARD_MIN_POP + " people (Village).</p>"
+        : "<p class='muted' style='text-align:center'>🏆 Joining the leaderboard as <b>" + esc(city.name) + "</b>…</p>";
+      syncOnline(true);
+    }
     html += "<div class='tabs'><button data-tab='top' class='" + (tab === "top" ? "on" : "") + "'>🏆 Top towns</button>" +
       "<button data-tab='friends' class='" + (tab === "friends" ? "on" : "") + "'>👫 Friends</button></div>" +
       "<div id='tabBody'><p class='muted' style='text-align:center'>Loading…</p></div>" + visitByLinkCard();
@@ -536,7 +546,7 @@ function openSocial(tab = "top") {
       if (b.dataset.visit) return visitHandle(b.dataset.visit).then((ok) => ok && closeSheet());
       online.unfollow(b.dataset.unfollow).then(() => openSocial("friends"));
     });
-    if (online.handle) fillTab(body, tab);
+    if (online.ready) fillTab(body, tab);
     mountAccount(body);
   });
 }
@@ -580,11 +590,11 @@ function accountCard() {
       "<div class='btn-col'><button id='signOutBtn' class='ghost'>Sign out</button></div></div>";
   }
   if (online.pendingEmail) {
-    return "<div class='card'><h3>📬 Check your email</h3><p class='muted'>Tap the link we sent to " + esc(online.pendingEmail) + " to finish protecting your town.</p>" +
-      "<div class='btn-col'><button id='linkEmailBtn' class='ghost'>Use a different email</button><button id='signInBtn' class='ghost'>I already have a town on another phone</button></div></div>";
+    return "<div class='card'><h3>📬 Check your email</h3><p class='muted'>Use the code or link we sent to " + esc(online.pendingEmail) + " to finish protecting your town.</p>" +
+      "<div class='btn-col'><button id='linkEmailBtn' class='ghost'>Enter the code / use a different email</button><button id='signInBtn' class='ghost'>I already have a town</button></div></div>";
   }
   return "<div class='card'><h3>☁️ Protect your town</h3><p class='muted'>Add your email so you never lose your town if you lose or change your phone.</p>" +
-    "<div class='btn-col'><button id='linkEmailBtn'>✉️ Add my email</button><button id='signInBtn' class='ghost'>I already have a town on another phone</button></div></div>";
+    "<div class='btn-col'><button id='linkEmailBtn'>✉️ Add my email</button><button id='signInBtn' class='ghost'>I already have a town</button></div></div>";
 }
 
 function mountAccount(body) {
@@ -592,33 +602,66 @@ function mountAccount(body) {
     const b = body.querySelector(id);
     if (b) b.addEventListener("click", fn);
   };
-  on("#linkEmailBtn", async () => {
-    const email = (prompt("Your email address:") || "").trim();
-    if (!email) return;
-    syncOnline(true);
-    const err = await online.linkEmail(email);
-    if (err) return toast("⚠️ " + err);
-    showModal({ icon: "📬", title: "Check your email", body: "Tap the link we sent to <b>" + esc(email) + "</b> to finish. Until then, keep playing as normal.", button: "OK" });
-    closeSheet();
-  });
-  on("#signInBtn", async () => {
-    const email = (prompt("The email you used on your other phone:") || "").trim();
-    if (!email) return;
-    const err = await online.sendLoginCode(email);
-    if (err) return toast("⚠️ " + err);
-    const code = (prompt("Check your email and tap the Sign in link on this phone.\n\nIf the email shows a 6-digit code instead, type it here:") || "").trim();
-    if (!code) return closeSheet();
-    const bad = await online.verifyLoginCode(email, code);
-    if (bad) return toast("⚠️ " + bad);
-    closeSheet();
-    await offerCloudTown(true);
-  });
+  on("#linkEmailBtn", () => openEmailFlow("link"));
+  on("#signInBtn", () => openEmailFlow("signin"));
   on("#signOutBtn", async () => {
     if (!confirm("Sign out? Your town stays on this phone, but it won't back up until you sign in again.")) return;
     await online.signOut();
     closeSheet();
     toast("Signed out");
   });
+}
+
+// Email step by step: address → code. "link" protects this town with an email;
+// "signin" brings a town from another phone, browser or the Home Screen app.
+function openEmailFlow(mode, email = "") {
+  if (!online.ready) return toast("📡 You need to be online for this");
+  const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone;
+  const intro = mode === "link"
+    ? "We'll email you a code. Then you can get this town back on any phone, browser or the Home Screen app."
+    : "Use the email you added to your town in the other place" + (standalone ? " (for example in Safari)" : "") + ". We'll email you a code.";
+  const title = mode === "link" ? "✉️ Protect your town" : "🔑 I already have a town";
+  if (!email) {
+    openSheet(title,
+      "<p>" + intro + "</p><input type='email' id='efEmail' inputmode='email' autocomplete='email' autocapitalize='off' spellcheck='false' placeholder='you@example.com' />" +
+      "<div class='btn-col'><button id='efSend' class='primary big'>Send code</button></div>" +
+      (mode === "signin" ? "<p class='muted'>Never added an email? In the other place, open ⚙️ Settings → 💾 Back up my town, then here use ⚙️ Settings → 📂 Restore from backup.</p>" : ""),
+      (body) => {
+        const send = body.querySelector("#efSend");
+        send.addEventListener("click", async () => {
+          const value = body.querySelector("#efEmail").value.trim();
+          if (!/^\S+@\S+\.\S+$/.test(value)) return toast("That email doesn't look right");
+          send.disabled = true;
+          if (mode === "link") syncOnline(true);
+          const err = mode === "link" ? await online.linkEmail(value) : await online.sendLoginCode(value);
+          send.disabled = false;
+          if (err) return toast("⚠️ " + (/signups not allowed|not found/i.test(err) ? "No town uses that email yet" : err));
+          openEmailFlow(mode, value);
+        });
+      });
+    return;
+  }
+  openSheet(title,
+    "<p>We sent a code to <b>" + esc(email) + "</b>. Type it here:</p>" +
+    "<input type='text' id='efCode' inputmode='numeric' autocomplete='one-time-code' maxlength='10' placeholder='123456' />" +
+    "<div class='btn-col'><button id='efVerify' class='primary big'>" + (mode === "link" ? "Protect my town" : "Sign in") + "</button>" +
+    "<button id='efBack' class='ghost'>Use a different email</button></div>" +
+    "<p class='muted'>No code in the email? Tap its link instead – on this same device and browser.</p>",
+    (body) => {
+      body.querySelector("#efBack").addEventListener("click", () => openEmailFlow(mode));
+      const verify = body.querySelector("#efVerify");
+      verify.addEventListener("click", async () => {
+        const code = body.querySelector("#efCode").value.replace(/\s/g, "");
+        if (!code) return;
+        verify.disabled = true;
+        const err = mode === "link" ? await online.verifyLinkCode(email, code) : await online.verifyLoginCode(email, code);
+        verify.disabled = false;
+        if (err) return toast("⚠️ " + err);
+        closeSheet();
+        if (mode === "link") toast("☁️ Your town is protected");
+        else await offerCloudTown(true);
+      });
+    });
 }
 
 async function shareTown() {
@@ -836,6 +879,7 @@ function showWelcome(fresh) {
       "🎁 Claim your <b>daily gift</b> to keep a streak.</p>" +
       "<p class='muted'>No two towns are alike – yours was grown from seed #" + city.seed + ".</p>",
     button: fresh ? "Let's grow!" : "Got it",
+    extra: fresh && online.enabled ? { label: "I already have a town", onClick: () => openEmailFlow("signin") } : null,
   });
 }
 

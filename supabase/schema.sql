@@ -17,6 +17,8 @@ create table if not exists public.profiles (
   updated_at  timestamptz not null default now()
 );
 create index if not exists profiles_pop_idx on public.profiles (pop desc);
+create index if not exists profiles_seed_idx on public.profiles (seed);
+create index if not exists profiles_updated_idx on public.profiles (updated_at desc);
 
 -- One-way follows ("friends").
 create table if not exists public.follows (
@@ -76,10 +78,12 @@ alter table public.scans    enable row level security;
 drop policy if exists "profiles are public"  on public.profiles;
 drop policy if exists "insert own profile"   on public.profiles;
 drop policy if exists "update own profile"   on public.profiles;
+drop policy if exists "delete own profile"   on public.profiles;
 create policy "profiles are public" on public.profiles for select using (true);
 create policy "insert own profile"  on public.profiles for insert to authenticated with check ((select auth.uid()) = id);
 create policy "update own profile"  on public.profiles for update to authenticated
   using ((select auth.uid()) = id) with check ((select auth.uid()) = id);
+create policy "delete own profile"  on public.profiles for delete to authenticated using ((select auth.uid()) = id);
 
 drop policy if exists "see own follows"   on public.follows;
 drop policy if exists "follow as self"    on public.follows;
