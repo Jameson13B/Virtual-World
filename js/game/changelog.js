@@ -6,6 +6,12 @@
 
 const CHANGELOG = [
   {
+    version: "0.6.3",
+    notes: [
+      "💰 A shop's money bag appears once it's a quarter full, so every tap is worth it",
+    ],
+  },
+  {
     version: "0.6.2",
     notes: [
       "🚚🚚 Megalopolis towns hire two collectors at once – they start on opposite sides of town",

@@ -183,7 +183,7 @@ class City {
         continue;
       }
       if (lot.kind === "com") {
-        lot.coins = Math.min(lot.coins + lot.level * 0.06 * appeal * dt, 30 * lot.level);
+        lot.coins = Math.min(lot.coins + lot.level * 0.06 * appeal * dt, City.coinCap(lot));
       } else if (!lot.kind) {
         empties.push(lot);
       }
@@ -248,9 +248,19 @@ class City {
   }
 
   // ---- player actions -----------------------------------------------------
+  // A shop holds up to 30 coins per level; its 💰 bag appears (and can be
+  // collected) once it's at least a quarter full.
+  static coinCap(lot) {
+    return 30 * lot.level;
+  }
+
+  static bagReady(lot) {
+    return lot.kind === "com" && lot.building <= 0 && lot.coins >= Math.max(1, City.coinCap(lot) * 0.25);
+  }
+
   collect(lot) {
+    if (!City.bagReady(lot)) return 0;
     const amount = Math.floor(lot.coins);
-    if (amount < 1) return 0;
     lot.coins -= amount;
     this.coins += amount;
     this.stats.collected += amount;

@@ -6,7 +6,7 @@
 const $ = (sel) => document.querySelector(sel);
 const SAVE_KEY = "vw.city";
 const PREFS_KEY = "vw.gamePrefs";
-const VERSION = "0.6.2";
+const VERSION = "0.6.3";
 
 const canvas = $("#cityCanvas");
 const ctx = canvas.getContext("2d");
@@ -301,7 +301,7 @@ function onTap(world) {
 
   if (!visit && !ui.placing) {
     for (const lot of city.lots) {
-      if (lot.kind !== "com" || lot.building > 0 || lot.coins < 1) continue;
+      if (!City.bagReady(lot)) continue;
       if (distance(renderer.bubbleAnchor(lot, vp), world) < 34 * Math.max(1, z * 0.75)) return collect(lot);
     }
   }
@@ -323,7 +323,7 @@ function onTap(world) {
     ui.selected = null;
     return;
   }
-  if (!visit && lot.kind === "com" && lot.building <= 0 && lot.coins >= 1) return collect(lot);
+  if (!visit && City.bagReady(lot)) return collect(lot);
   openLotSheet(lot, !!visit);
 }
 
@@ -360,7 +360,9 @@ function openLotSheet(lot, readOnly) {
       ? "<p>Home for up to <b>" + lvl * 6 + " residents</b>.</p>"
       : "<p>Provides <b>" + lvl * 5 + " jobs</b> and earns <b>" + (lvl * 0.06 * c.appeal * 60).toFixed(1) + " 💰/min</b>.</p>";
     if (!readOnly) {
-      if (!isRes) html += "<p>Waiting to collect: <b>" + Math.floor(lot.coins) + " 💰</b></p>";
+      if (!isRes) html += City.bagReady(lot)
+        ? "<p>Waiting to collect: <b>" + Math.floor(lot.coins) + " 💰</b></p>"
+        : "<p class='muted'>Saving up: " + Math.floor(lot.coins) + " 💰 – the 💰 bag appears at " + Math.ceil(City.coinCap(lot) * 0.25) + ".</p>";
       const up = city.upgradeInfo(lot);
       if (up) {
         const why = city.pop < up.needPop ? "Needs " + up.needPop + " population" : city.coins < up.cost ? "Not enough coins" : "";
@@ -1077,8 +1079,8 @@ function hireCollector() {
   const c = { city, kept: 0, fee: 0, lastStop: performance.now(), pool: new Set(shops), total: shops.length };
   const onCollect = (lot) => {
     c.lastStop = performance.now();
+    if (!City.bagReady(lot)) return;
     const amount = Math.floor(lot.coins);
-    if (amount < 1) return;
     const keep = Math.round(amount * (1 - COLLECTOR_CUT));
     lot.coins -= amount;
     city.coins += keep;

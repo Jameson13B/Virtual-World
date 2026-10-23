@@ -234,7 +234,7 @@ class CityRenderer {
     // coin bubbles and highlights on top
     for (const lot of city.lots) {
       if (!visible(lot.poly.bounds)) continue;
-      if (lot.kind === "com" && lot.building <= 0 && lot.coins >= 1) this.#drawBubble(ctx, lot, vp, z, now);
+      if (City.bagReady(lot)) this.#drawBubble(ctx, lot, vp, z, now);
     }
     if (selected) {
       selected.poly.draw(ctx, { fill: "rgba(0,0,0,0)", stroke: "#facc15", lineWidth: 6 * Math.max(1, z * 0.6) });
