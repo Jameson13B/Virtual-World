@@ -15,6 +15,9 @@ const TIERS = [
   { pop: 120, name: "City", icon: "🏙️", reward: 120 },
   { pop: 400, name: "Metropolis", icon: "🌆", reward: 250 },
   { pop: 1000, name: "Megalopolis", icon: "🌃", reward: 500 },
+  { pop: 2500, name: "Metroplex", icon: "🌉", reward: 2000 },
+  { pop: 5000, name: "Capital", icon: "🏛️", reward: 5000 },
+  { pop: 10000, name: "Global City", icon: "🌍", reward: 12000 },
 ];
 
 const SPECIALS = {
@@ -125,6 +128,12 @@ class City {
 
   roadCost() {
     return Math.round(20 + 12 * Math.pow(this.roadCount - 1, 1.4));
+  }
+
+  // How much scans and the daily gift are multiplied by. Tied to the road cost
+  // so a typical scan stays worth about a third of a road at any town size.
+  rewardScale() {
+    return Math.max(1 + Math.max(0, this.roadCount - 1) * 0.08, this.roadCost() / 80);
   }
 
   roadDuration() {
@@ -311,7 +320,7 @@ class City {
     const y = new Date();
     y.setDate(y.getDate() - 1);
     const streak = this.daily.last === todayKey(y) ? this.daily.streak + 1 : 1;
-    return { available: true, streak, materials: 15 + 5 * Math.min(streak - 1, 7), coins: 20 };
+    return { available: true, streak, materials: Math.round((15 + 5 * Math.min(streak - 1, 7)) * this.rewardScale()), coins: 20 };
   }
 
   claimDaily() {

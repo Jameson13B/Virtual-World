@@ -96,9 +96,8 @@ const Rewards = {
     }
 
     // Rewards grow with your city so scans always matter.
-    const growth = 1 + Math.max(0, city.roadCount - 1) * 0.08;
-    materials = Math.round(materials * growth);
-    coins = Math.round(coins * growth);
+    materials = Math.round(materials * city.rewardScale());
+    coins = Math.round(coins * (1 + Math.max(0, city.roadCount - 1) * 0.08));
 
     // Rare drops: the roll is part of the code, so a lucky sticker stays lucky.
     const roll = rng();

@@ -6,6 +6,13 @@
 
 const CHANGELOG = [
   {
+    version: "0.7.0",
+    notes: [
+      "📷 Scans and the 🎁 daily gift now grow with your town – a scan is worth about a third of a road at any size",
+      "🌉 Three new tiers past Megalopolis: Metroplex (2,500 people), Capital (5,000) and Global City (10,000), each with a big 🧱 reward",
+    ],
+  },
+  {
     version: "0.6.3",
     notes: [
       "💰 A shop's money bag appears once it's a quarter full, so every tap is worth it",

@@ -21,7 +21,7 @@ Its roads, buildings and rendering engine come from freeCodeCamp's
 
 - **Scanning:** what a code is for decides the reward. Wi-Fi codes give power and coins, contact cards bring families, product barcodes bring goods, and restaurant menus, parking meters, museums and social links each have their own flavor. The exact contents of a code decide the amounts and the rare drops, so the same sticker gives every player the same reward. Each code counts once per town, and URLs ignore `?query` strings so one restaurant's 30 table codes count as one.
 - **Rare drops:** parks, fountains, schools, clinics, fire stations, libraries, a Sky Tower, a stadium and a Ferris wheel. Place them on empty lots to raise ✨ appeal, which makes the town grow faster.
-- **Tiers:** Hamlet → Village (10 people) → Town (40) → City (120) → Metropolis (400) → Megalopolis (1000).
+- **Tiers:** Hamlet → Village (10 people) → Town (40) → City (120) → Metropolis (400) → Megalopolis (1,000) → Metroplex (2,500) → Capital (5,000) → Global City (10,000).
 - **Offline progress:** the town keeps growing for up to 3 hours while the app is closed.
 - **Social:** your town's name is your username, so you're on the 🏆 world leaderboard automatically. Add friends and visit anyone's town by name or link (read-only). If two towns share a name, the newer one gets a number added (oakstead2). Each scan also tells you how many explorers have found that code before you.
 - **Cloud save:** every player gets a silent account, so progress backs up automatically. Adding an email makes the town recoverable on a new phone.

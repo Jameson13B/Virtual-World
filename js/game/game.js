@@ -6,7 +6,7 @@
 const $ = (sel) => document.querySelector(sel);
 const SAVE_KEY = "vw.city";
 const PREFS_KEY = "vw.gamePrefs";
-const VERSION = "0.6.3";
+const VERSION = "0.7.0";
 
 const canvas = $("#cityCanvas");
 const ctx = canvas.getContext("2d");
