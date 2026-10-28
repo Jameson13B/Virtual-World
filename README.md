@@ -14,15 +14,16 @@ Its roads, buildings and rendering engine come from freeCodeCamp's
         ↓  🧱 materials
 🛣️ roads build themselves (each player's road network is unique)
         ↓  new empty lots
-🏠 homes and 🏪 shops develop by demand (homes need jobs, shops need customers)
+🏠 homes, 🏪 shops and 🏭 factories develop by demand (homes need jobs, shops need customers)
         ↓
-👥 people move in → 💰 taxes + shop income → ⬆️ upgrades → bigger tiers
+👥 people move in → 💰 taxes + shop income, 🧱 from factories → ⬆️ upgrades → bigger tiers
 ```
 
 - **Scanning:** what a code is for decides the reward. Wi-Fi codes give power and coins, contact cards bring families, product barcodes bring goods, and restaurant menus, parking meters, museums and social links each have their own flavor. The exact contents of a code decide the amounts and the rare drops, so the same sticker gives every player the same reward. Each code counts once per town, and URLs ignore `?query` strings so one restaurant's 30 table codes count as one.
-- **Rare drops:** parks, fountains, schools, clinics, fire stations, libraries, a Sky Tower, a stadium and a Ferris wheel. Place them on empty lots to raise ✨ appeal, which makes the town grow faster.
+- **Rare drops:** parks, fountains, schools, clinics, fire stations, libraries, a Sky Tower, a stadium and a Ferris wheel. Place them on an empty lot, or on top of a home, shop or factory to replace it, to raise ✨ appeal, which makes the town grow faster. A placed special can go back in the bag at any time.
+- **Factories:** from Town (40 people) on, about 1 in 4 job buildings is a 🏭 factory. Factories fill up with 🧱 and show a 📦 crate to tap, a small boost on top of scanning.
 - **Tiers:** Hamlet → Village (10 people) → Town (40) → City (120) → Metropolis (400) → Megalopolis (1,000) → Metroplex (2,500) → Capital (5,000) → Global City (10,000).
-- **Offline progress:** the town keeps growing for up to 3 hours while the app is closed.
+- **Offline progress:** the town keeps growing for up to 1 hour while the app is closed.
 - **Social:** your town's name is your username, so you're on the 🏆 world leaderboard automatically. Add friends and visit anyone's town by name or link (read-only). If two towns share a name, the newer one gets a number added (oakstead2). Each scan also tells you how many explorers have found that code before you.
 - **Cloud save:** every player gets a silent account, so progress backs up automatically. Adding an email makes the town recoverable on a new phone.
 - **Hidden extras:** in ⚙️ Settings, tap the version number 5 times. That unlocks driving around your town, typing a code to simulate a scan, fast-forwarding time, the sandbox editor and AI car training.
@@ -64,6 +65,7 @@ js/game/layout.js            deterministic road growth + building lots
 js/game/city.js              economy, tiers, specials, save/share codes
 js/game/rewards.js           scan classification and rewards
 js/game/render.js            map rendering (lots, construction, forest, bubbles)
+js/game/models.js            3D models for special buildings and factories (some animated)
 js/game/scanner.js           camera scanning (BarcodeDetector or jsQR) + photo fallback
 js/game/touch.js             pan / pinch / tap
 js/game/online.js            Supabase: accounts, leaderboard, friends, cloud save
@@ -85,5 +87,5 @@ so future changes to the growth algorithm won't break old links.
 
 ### Tuning
 
-- **Pacing:** `City.roadCost()`, `#develop()` (demand formulas), `tick()` (growth rates and shop income), and the `TIERS` and `SPECIALS` tables in `js/game/city.js`.
+- **Pacing:** `City.roadCost()`, `#develop()` (demand formulas), `tick()` (growth rates, shop income), `factoryRate()` and `INDUSTRY_SHARE` (factories), and the `TIERS` and `SPECIALS` tables in `js/game/city.js`.
 - **Rewards:** the `SCAN_KINDS` and `URL_FLAVORS` tables in `js/game/rewards.js`.

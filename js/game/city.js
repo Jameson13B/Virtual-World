@@ -3,8 +3,9 @@
 //
 //   🧱 materials  -> roads get built automatically when you can afford one
 //   new roads     -> new empty lots
-//   empty lots    -> develop on their own into homes 🏠 or shops 🏪 (by demand)
+//   empty lots    -> develop on their own into homes 🏠, shops 🏪 or factories 🏭
 //   homes         -> room for people 👥     shops -> jobs + 💰 to collect
+//                                            factories -> jobs + 🧱 to collect
 //   specials      -> parks, schools, towers… raise ✨ appeal (faster growth)
 // ---------------------------------------------------------------------------
 
@@ -21,18 +22,22 @@ const TIERS = [
 ];
 
 const SPECIALS = {
-  park: { icon: "🌳", name: "Park", rarity: "uncommon", appeal: 0.15, style: "park" },
-  fountain: { icon: "⛲", name: "Fountain", rarity: "uncommon", appeal: 0.12, style: "plaza" },
-  carousel: { icon: "🎠", name: "Carousel", rarity: "uncommon", appeal: 0.12, style: "plaza" },
-  school: { icon: "🏫", name: "School", rarity: "rare", appeal: 0.3, style: "civic", color: "#e0a63a", height: 110 },
-  clinic: { icon: "🏥", name: "Clinic", rarity: "rare", appeal: 0.3, style: "civic", color: "#dfe7ec", height: 120 },
-  fire: { icon: "🚒", name: "Fire Station", rarity: "rare", appeal: 0.25, style: "civic", color: "#c0392b", height: 90 },
-  library: { icon: "📚", name: "Library", rarity: "rare", appeal: 0.25, style: "civic", color: "#8e6c4a", height: 100 },
-  tower: { icon: "🗼", name: "Sky Tower", rarity: "legendary", appeal: 0.6, style: "civic", color: "#9fc5e8", height: 420 },
-  stadium: { icon: "🏟️", name: "Stadium", rarity: "legendary", appeal: 0.8, style: "civic", color: "#95a5a6", height: 80 },
-  wheel: { icon: "🎡", name: "Ferris Wheel", rarity: "legendary", appeal: 0.6, style: "plaza" },
+  park: { icon: "🌳", name: "Park", rarity: "uncommon", appeal: 0.15, about: "Shady trees, a duck pond and benches for a quiet afternoon." },
+  fountain: { icon: "⛲", name: "Fountain", rarity: "uncommon", appeal: 0.12, about: "A stone fountain that never stops splashing. Wishes not guaranteed." },
+  carousel: { icon: "🎠", name: "Carousel", rarity: "uncommon", appeal: 0.12, about: "Painted horses going round and round under a striped roof." },
+  school: { icon: "🏫", name: "School", rarity: "rare", appeal: 0.3, about: "Brick classrooms, a bell tower and a schoolyard full of noise." },
+  clinic: { icon: "🏥", name: "Clinic", rarity: "rare", appeal: 0.3, about: "Doctors on call day and night, with a helipad on the roof." },
+  fire: { icon: "🚒", name: "Fire Station", rarity: "rare", appeal: 0.25, about: "The fire truck is washed, parked out front and ready to roll." },
+  library: { icon: "📚", name: "Library", rarity: "rare", appeal: 0.25, about: "Marble columns and a million quiet pages behind them." },
+  tower: { icon: "🗼", name: "Sky Tower", rarity: "legendary", appeal: 0.6, about: "The tallest thing for miles, with a revolving restaurant at the top." },
+  stadium: { icon: "🏟️", name: "Stadium", rarity: "legendary", appeal: 0.8, about: "Floodlights, a perfect pitch and a crowd that never stops doing the wave." },
+  wheel: { icon: "🎡", name: "Ferris Wheel", rarity: "legendary", appeal: 0.6, about: "A glittering wheel with the best view of town from the top car." },
 };
 const SPECIAL_IDS = Object.keys(SPECIALS);
+
+// Factories start appearing at Town, as about 1 in 4 of the job buildings.
+const INDUSTRY_TIER = 2;
+const INDUSTRY_SHARE = 0.25;
 
 const NAME_PARTS = {
   start: ["Oak", "Maple", "River", "Stone", "Clear", "Ash", "Pine", "Willow", "Bright", "Fox", "Elder", "Silver", "Cedar", "Amber", "Hollow", "North", "Rose", "Iron", "Moss", "Gold", "Lark", "Wren", "Cobble", "Sun", "Frost"],
@@ -102,7 +107,7 @@ class City {
 
   get jobs() {
     let j = 0;
-    for (const l of this.lots) if (l.kind === "com") j += l.effectiveLevel * 5;
+    for (const l of this.lots) if (l.kind === "com" || l.kind === "ind") j += l.effectiveLevel * 5;
     return j;
   }
 
@@ -140,8 +145,17 @@ class City {
     return Math.min(60, 12 + this.roadCount * 1.5);
   }
 
+  // 🧱 per second for each factory level. All level-1 factories together make
+  // about a third of a road per hour (fewer than 3 make less), and upgrading
+  // them all raises that to a full road per hour.
+  factoryRate() {
+    let n = 0;
+    for (const l of this.lots) if (l.kind === "ind") n++;
+    return this.roadCost() / 3 / 3600 / Math.max(3, n);
+  }
+
   upgradeInfo(lot) {
-    if ((lot.kind !== "res" && lot.kind !== "com") || lot.level >= 3) return null;
+    if (!["res", "com", "ind"].includes(lot.kind) || lot.level >= 3) return null;
     const cost = lot.level === 1 ? 150 : 600;
     const needPop = lot.level === 1 ? 40 : 120;
     return { cost, needPop, ok: this.coins >= cost && this.pop >= needPop && lot.building <= 0 };
@@ -155,6 +169,7 @@ class City {
   // ---- simulation ---------------------------------------------------------
   tick(dt, rand = Math.random) {
     const events = [];
+    this.goodsRate = this.factoryRate();
 
     // Roads build themselves whenever there are enough materials.
     if (this.roadJob) {
@@ -192,7 +207,9 @@ class City {
         continue;
       }
       if (lot.kind === "com") {
-        lot.coins = Math.min(lot.coins + lot.level * 0.06 * appeal * dt, City.coinCap(lot));
+        lot.coins = Math.min(lot.coins + lot.level * 0.03 * appeal * dt, this.storeCap(lot));
+      } else if (lot.kind === "ind") {
+        lot.coins = Math.min(lot.coins + lot.level * this.goodsRate * dt, this.storeCap(lot)); // 🧱, stored in `coins`
       } else if (!lot.kind) {
         empties.push(lot);
       }
@@ -230,17 +247,27 @@ class City {
     let cap = 0, jobs = 0;
     for (const l of this.lots) {
       if (l.kind === "res") cap += Math.max(1, l.level) * 6;
-      if (l.kind === "com") jobs += Math.max(1, l.level) * 5;
+      if (l.kind === "com" || l.kind === "ind") jobs += Math.max(1, l.level) * 5;
     }
     // Each job supports 2.2 residents and each resident wants 0.6 jobs. Because
     // 2.2 × 0.6 > 1, homes and shops keep leapfrogging instead of stalling.
     const resDemand = jobs * 2.2 + 10 - cap;
     const comDemand = this.pop * 0.6 + 3 - jobs;
     if (resDemand <= 0 && comDemand <= 0) return false;
-    lot.kind = resDemand >= comDemand ? "res" : "com";
+    lot.kind = resDemand >= comDemand ? "res" : this.#wantsFactory() ? "ind" : "com";
     lot.level = 1;
     lot.building = 10 + rand() * 10;
     return true;
+  }
+
+  #wantsFactory() {
+    if (this.tierReached < INDUSTRY_TIER) return false;
+    let shops = 0, factories = 0;
+    for (const l of this.lots) {
+      if (l.kind === "com") shops++;
+      else if (l.kind === "ind") factories++;
+    }
+    return factories < (shops + factories + 1) * INDUSTRY_SHARE;
   }
 
   // Fast-forwards time (offline progress). Returns a summary of what changed.
@@ -257,23 +284,36 @@ class City {
   }
 
   // ---- player actions -----------------------------------------------------
-  // A shop holds up to 30 coins per level; its 💰 bag appears (and can be
-  // collected) once it's at least a quarter full.
-  static coinCap(lot) {
+  // A shop holds up to 30 coins per level and fills in ~1000 s / appeal. A
+  // factory holds 30 minutes of its 🧱. The 💰 bag / 📦 crate appears (and can
+  // be collected) once it's at least a quarter full.
+  storeCap(lot) {
+    if (lot.kind === "ind") return lot.level * (this.goodsRate ?? this.factoryRate()) * 1800;
     return 30 * lot.level;
   }
 
-  static bagReady(lot) {
-    return lot.kind === "com" && lot.building <= 0 && lot.coins >= Math.max(1, City.coinCap(lot) * 0.25);
+  bagReady(lot) {
+    return (lot.kind === "com" || lot.kind === "ind") && lot.building <= 0 && lot.coins >= Math.max(1, this.storeCap(lot) * 0.25);
   }
 
-  collect(lot) {
-    if (!City.bagReady(lot)) return 0;
+  // Collects a shop's 💰 or a factory's 🧱, minus `cut` (the collector's fee).
+  // Returns how much the town kept.
+  collect(lot, cut = 0) {
+    if (!this.bagReady(lot)) return 0;
+    return this.#payOut(lot, cut);
+  }
+
+  #payOut(lot, cut = 0) {
     const amount = Math.floor(lot.coins);
+    const kept = Math.round(amount * (1 - cut));
     lot.coins -= amount;
-    this.coins += amount;
-    this.stats.collected += amount;
-    return amount;
+    if (lot.kind === "ind") {
+      this.materials += kept;
+    } else {
+      this.coins += kept;
+      this.stats.collected += kept;
+    }
+    return kept;
   }
 
   upgrade(lot) {
@@ -285,11 +325,23 @@ class City {
     return true;
   }
 
+  // Specials go on an empty lot or replace a home, shop or factory. Whatever a
+  // shop or factory was holding is collected first.
   placeSpecial(lot, id) {
     const i = this.inventory.indexOf(id);
-    if (i < 0 || !lot || lot.kind) return false;
+    if (i < 0 || !lot || lot.kind === "special") return false;
+    if (lot.kind === "com" || lot.kind === "ind") this.#payOut(lot);
     this.inventory.splice(i, 1);
     Object.assign(lot, { kind: "special", special: id, level: 1, building: 6, coins: 0 });
+    return true;
+  }
+
+  // Puts a placed special back in the bag. The lot is empty again and develops
+  // by demand like any other.
+  removeSpecial(lot) {
+    if (!lot || lot.kind !== "special") return false;
+    this.inventory.push(lot.special);
+    Object.assign(lot, { kind: null, special: null, level: 0, building: 0, coins: 0 });
     return true;
   }
 
@@ -391,6 +443,7 @@ class City {
       if (!l.kind || l.effectiveLevel < 1) return ".";
       if (l.kind === "res") return "abc"[l.effectiveLevel - 1];
       if (l.kind === "com") return "ABC"[l.effectiveLevel - 1];
+      if (l.kind === "ind") return "xyz"[l.effectiveLevel - 1];
       return String(Math.max(0, SPECIAL_IDS.indexOf(l.special)));
     }).join("");
     const data = {
@@ -420,6 +473,7 @@ class City {
       if (!lot || ch === ".") return;
       if ("abc".includes(ch)) Object.assign(lot, { kind: "res", level: "abc".indexOf(ch) + 1 });
       else if ("ABC".includes(ch)) Object.assign(lot, { kind: "com", level: "ABC".indexOf(ch) + 1 });
+      else if ("xyz".includes(ch)) Object.assign(lot, { kind: "ind", level: "xyz".indexOf(ch) + 1 });
       else Object.assign(lot, { kind: "special", level: 1, special: SPECIAL_IDS[+ch] || "park" });
     });
     city.pop = data.u || 0;

@@ -6,7 +6,7 @@
 const $ = (sel) => document.querySelector(sel);
 const SAVE_KEY = "vw.city";
 const PREFS_KEY = "vw.gamePrefs";
-const VERSION = "0.7.0";
+const VERSION = "0.8.0";
 
 const canvas = $("#cityCanvas");
 const ctx = canvas.getContext("2d");
@@ -55,7 +55,17 @@ function saveGame() {
   if (!writeJSON(SAVE_KEY, city.toSave())) toast("⚠️ Couldn't save – storage full?");
 }
 
-const fmt = (n) => (n >= 10000 ? (n / 1000).toFixed(n >= 100000 ? 0 : 1) + "k" : String(Math.floor(n)));
+// 9999, 12.3K, 123K, 1.2M, 45.6M, 2.0B. Rolls over to the next unit instead
+// of showing "1000K".
+const FMT_UNITS = [[1e3, "K"], [1e6, "M"], [1e9, "B"]];
+const fmt = (n) => {
+  if (n < 10000) return String(Math.floor(n));
+  for (const [size, suffix] of FMT_UNITS) {
+    const v = n / size;
+    const s = v.toFixed(v >= 99.95 ? 0 : 1);
+    if (+s < 1000 || suffix === "B") return s + suffix;
+  }
+};
 const duration = (ms) => {
   const m = Math.max(1, Math.ceil(ms / 60000));
   return m >= 60 ? Math.floor(m / 60) + "h " + (m % 60) + "m" : m + "m";
@@ -248,7 +258,7 @@ function openAppeal() {
     "</div>" + (ids.length ? "" : "<p class='muted'>No special buildings yet.</p>") + "</div>";
   if (!visit) {
     html +=
-      "<div class='card'><h3>How to raise it</h3><p class='muted'>Scanning codes sometimes drops special buildings. Place them on empty lots – rarer ones add more:</p>" +
+      "<div class='card'><h3>How to raise it</h3><p class='muted'>Scanning codes sometimes drops special buildings. Place them on any lot – rarer ones add more:</p>" +
       "<div class='list'>" + Object.keys(RARITY_INFO).map((r) => {
         const all = Object.values(SPECIALS).filter((sp) => sp.rarity === r);
         const lo = Math.min(...all.map((sp) => sp.appeal)), hi = Math.max(...all.map((sp) => sp.appeal));
@@ -285,7 +295,7 @@ function handleEvents(events) {
       saveGame();
     } else if (e.type === "built" && !visit) {
       const b = e.lot;
-      const label = b.kind === "res" ? "🏠" : b.kind === "com" ? "🏪" : SPECIALS[b.special]?.icon || "✨";
+      const label = KIND_ICONS[b.kind] || SPECIALS[b.special]?.icon || "✨";
       floater(b.center, label + " built!", "#bbf7d0");
     }
   }
@@ -301,38 +311,75 @@ function onTap(world) {
 
   if (!visit && !ui.placing) {
     for (const lot of city.lots) {
-      if (!City.bagReady(lot)) continue;
+      if (!city.bagReady(lot)) continue;
       if (distance(renderer.bubbleAnchor(lot, vp), world) < 34 * Math.max(1, z * 0.75)) return collect(lot);
     }
   }
 
   const lot = active.city.lots.find((l) => l.poly.containsPoint(world));
   if (ui.placing) {
-    if (lot && !lot.kind) {
-      city.placeSpecial(lot, ui.placing);
-      floater(lot.center, SPECIALS[ui.placing].icon + " placed!", "#fde68a");
-      buzz(40);
-      stopPlacing();
-      saveGame();
-    } else {
-      toast("Tap one of the glowing empty lots");
-    }
-    return;
+    if (!lot) return toast("Tap an empty lot, or a building to replace");
+    if (lot.kind === "special") return toast("That lot already has a special building");
+    return lot.kind ? confirmReplace(lot) : placeSpecial(lot);
   }
   if (!lot) {
     ui.selected = null;
     return;
   }
-  if (!visit && City.bagReady(lot)) return collect(lot);
+  if (!visit && city.bagReady(lot)) return collect(lot);
   openLotSheet(lot, !!visit);
 }
 
 function collect(lot) {
   const got = city.collect(lot);
   if (got) {
-    floater(renderer.bubbleAnchor(lot, viewport.getViewPoint()), "+" + got + " 💰");
+    floater(renderer.bubbleAnchor(lot, viewport.getViewPoint()), "+" + got + (lot.kind === "ind" ? " 🧱" : " 💰"));
     buzz(15);
   }
+}
+
+function placeSpecial(lot) {
+  const id = ui.placing;
+  const stored = lot.kind === "com" || lot.kind === "ind" ? Math.floor(lot.coins) : 0;
+  const unit = lot.kind === "ind" ? " 🧱" : " 💰";
+  if (!city.placeSpecial(lot, id)) return;
+  floater(lot.center, SPECIALS[id].icon + " placed!", "#fde68a");
+  if (stored > 0) toast("Collected +" + stored + unit + " first");
+  buzz(40);
+  stopPlacing();
+  saveGame();
+}
+
+// Placing a special on a home, shop or factory tears it down, so ask first.
+function confirmReplace(lot) {
+  const s = SPECIALS[ui.placing];
+  const lvl = Math.max(1, lot.effectiveLevel);
+  const what = lot.kind === "res" ? "home for " + lvl * 6 + " residents" : lvl * 5 + " jobs";
+  const stored = lot.kind === "res" ? 0 : Math.floor(lot.coins);
+  ui.selected = lot;
+  const html =
+    "<p>Tear down this <b>" + buildingName(lot) + "</b> (level " + lvl + ", " + what + ") to make room for your <b>" + s.icon + " " + s.name + "</b>?</p>" +
+    (lot.level > 1 ? "<p class='muted'>Its upgrades aren't refunded.</p>" : "") +
+    (stored > 0 ? "<p class='muted'>The " + stored + (lot.kind === "ind" ? " 🧱" : " 💰") + " inside is collected first.</p>" : "") +
+    "<button id='replaceBtn' class='gold big'>Replace with " + s.icon + " " + s.name + "</button>" +
+    "<button id='keepBtn' class='big' style='margin-top:8px'>Keep it</button>";
+  openSheet("Replace this building?", html, (body) => {
+    body.querySelector("#replaceBtn").addEventListener("click", () => {
+      closeSheet();
+      placeSpecial(lot);
+    });
+    body.querySelector("#keepBtn").addEventListener("click", closeSheet);
+  });
+}
+
+const KIND_ICONS = { res: "🏠", com: "🏪", ind: "🏭" };
+const BUILDING_NAMES = {
+  res: ["", "Cottage", "Townhouse", "Apartments"],
+  com: ["", "Corner shop", "Market", "Office tower"],
+  ind: ["", "Workshop", "Factory", "Industrial plant"],
+};
+function buildingName(lot, lvl = Math.max(1, lot.effectiveLevel)) {
+  return KIND_ICONS[lot.kind] + " " + BUILDING_NAMES[lot.kind][lvl];
 }
 
 function openLotSheet(lot, readOnly) {
@@ -347,26 +394,34 @@ function openLotSheet(lot, readOnly) {
     html = "<p>This land will develop by itself into homes or shops as your town needs them.</p>" +
       (readOnly ? "" : "<p class='muted'>Got a special building? Place it here from 🎒 Items.</p>");
   } else if (lot.kind === "special") {
-    const s = SPECIALS[lot.special];
+    const s = SPECIALS[lot.special], r = RARITY_INFO[s.rarity];
+    const count = c.lots.filter((l) => l.special === lot.special).length;
     title = s.icon + " " + s.name;
-    html = "<p><span class='rarity' style='color:" + RARITY_INFO[s.rarity].color + "'>" + RARITY_INFO[s.rarity].label + "</span></p>" +
-      "<p>Makes the town more appealing: <b>+" + Math.round(s.appeal * 100) + "% ✨</b> faster growth.</p>";
+    html =
+      "<div class='special-hero' style='--rarity:" + r.color + "'><div class='special-icon'>" + s.icon + "</div>" +
+      "<div><span class='rarity-pill'>" + r.label + "</span><p>" + s.about + "</p></div></div>" +
+      "<div class='stat-grid'><div class='stat'><b>+" + Math.round(s.appeal * 100) + "% ✨</b><span>Faster growth</span></div>" +
+      "<div class='stat'><b>" + count + "</b><span>In " + (readOnly ? "their" : "your") + " town</span></div></div>" +
+      (readOnly ? "" : "<button id='returnBtn' class='big'>🎒 Return to bag</button>" +
+        "<p class='muted' style='text-align:center'>The lot becomes empty and builds again by demand.</p>");
   } else {
     const lvl = lot.effectiveLevel;
-    const isRes = lot.kind === "res";
-    const names = isRes ? ["", "Cottage", "Townhouse", "Apartments"] : ["", "Corner shop", "Market", "Office tower"];
-    title = (isRes ? "🏠 " : "🏪 ") + names[lvl] + " · level " + lvl;
-    html = isRes
+    const kind = lot.kind;
+    const unit = kind === "ind" ? "🧱" : "💰";
+    title = buildingName(lot, lvl) + " · level " + lvl;
+    html = kind === "res"
       ? "<p>Home for up to <b>" + lvl * 6 + " residents</b>.</p>"
-      : "<p>Provides <b>" + lvl * 5 + " jobs</b> and earns <b>" + (lvl * 0.06 * c.appeal * 60).toFixed(1) + " 💰/min</b>.</p>";
+      : kind === "ind"
+        ? "<p>Provides <b>" + lvl * 5 + " jobs</b> and makes <b>" + Math.round(lvl * c.factoryRate() * 3600) + " 🧱/hour</b>.</p>"
+        : "<p>Provides <b>" + lvl * 5 + " jobs</b> and earns <b>" + (lvl * 0.03 * c.appeal * 60).toFixed(1) + " 💰/min</b>.</p>";
     if (!readOnly) {
-      if (!isRes) html += City.bagReady(lot)
-        ? "<p>Waiting to collect: <b>" + Math.floor(lot.coins) + " 💰</b></p>"
-        : "<p class='muted'>Saving up: " + Math.floor(lot.coins) + " 💰 – the 💰 bag appears at " + Math.ceil(City.coinCap(lot) * 0.25) + ".</p>";
+      if (kind !== "res") html += city.bagReady(lot)
+        ? "<p>Waiting to collect: <b>" + Math.floor(lot.coins) + " " + unit + "</b></p>"
+        : "<p class='muted'>Saving up: " + Math.floor(lot.coins) + " " + unit + " – the " + (kind === "ind" ? "📦 crate" : "💰 bag") + " appears at " + Math.ceil(city.storeCap(lot) * 0.25) + ".</p>";
       const up = city.upgradeInfo(lot);
       if (up) {
         const why = city.pop < up.needPop ? "Needs " + up.needPop + " population" : city.coins < up.cost ? "Not enough coins" : "";
-        html += "<button id='upgradeBtn' class='gold big' " + (up.ok ? "" : "disabled") + ">⬆️ Upgrade to " + names[lvl + 1] + " · " + up.cost + " 💰</button>" +
+        html += "<button id='upgradeBtn' class='gold big' " + (up.ok ? "" : "disabled") + ">⬆️ Upgrade to " + BUILDING_NAMES[kind][lvl + 1] + " · " + up.cost + " 💰</button>" +
           (why ? "<p class='muted' style='text-align:center'>" + why + "</p>" : "");
       } else if (lvl >= 3) {
         html += "<p class='muted'>Fully upgraded! 🌟</p>";
@@ -374,6 +429,18 @@ function openLotSheet(lot, readOnly) {
     }
   }
   openSheet(title, html, (body) => {
+    const back = body.querySelector("#returnBtn");
+    if (back) {
+      back.addEventListener("click", () => {
+        const icon = SPECIALS[lot.special].icon;
+        if (city.removeSpecial(lot)) {
+          floater(lot.center, icon + " back in the bag", "#fde68a");
+          buzz(30);
+          saveGame();
+          closeSheet();
+        }
+      });
+    }
     const btn = body.querySelector("#upgradeBtn");
     if (btn) {
       btn.addEventListener("click", () => {
@@ -547,14 +614,14 @@ $("#itemsBtn").addEventListener("click", () => {
   const counts = {};
   for (const id of city.inventory) counts[id] = (counts[id] || 0) + 1;
   const ids = Object.keys(counts);
-  const empty = city.lots.filter((l) => !l.kind).length;
+  const spots = city.lots.filter((l) => l.kind !== "special").length;
   const html = ids.length
     ? "<div class='list'>" + ids.map((id) => {
         const s = SPECIALS[id], r = RARITY_INFO[s.rarity];
         return "<div class='item-row'><span class='emoji'>" + s.icon + "</span><div class='grow'><b>" + s.name + (counts[id] > 1 ? " ×" + counts[id] : "") + "</b>" +
           "<small><span class='rarity' style='color:" + r.color + "'>" + r.label + "</span> · +" + Math.round(s.appeal * 100) + "% ✨</small></div>" +
-          "<button data-place='" + id + "' class='primary' " + (empty ? "" : "disabled") + ">Place</button></div>";
-      }).join("") + "</div>" + (empty ? "" : "<p class='muted'>No empty lots right now – wait for a new road.</p>")
+          "<button data-place='" + id + "' class='primary' " + (spots ? "" : "disabled") + ">Place</button></div>";
+      }).join("") + "</div>" + (spots ? "" : "<p class='muted'>Every lot already has a special building – wait for a new road.</p>")
     : "<p>No special buildings yet.</p><p class='muted'>Scanning codes sometimes drops parks, schools, towers and more. Rarer codes, rarer drops! 🍀</p>";
   openSheet("🎒 Items", html, (body) => {
     body.querySelectorAll("[data-place]").forEach((b) => b.addEventListener("click", () => startPlacing(b.dataset.place)));
@@ -564,7 +631,7 @@ $("#itemsBtn").addEventListener("click", () => {
 function startPlacing(id) {
   closeSheet();
   ui.placing = id;
-  $("#placeText").textContent = "Tap an empty lot for your " + SPECIALS[id].icon + " " + SPECIALS[id].name;
+  $("#placeText").textContent = "Tap where your " + SPECIALS[id].icon + " " + SPECIALS[id].name + " goes";
   $("#placeBanner").hidden = false;
 }
 function stopPlacing() {
@@ -1042,8 +1109,8 @@ document.querySelectorAll("#dpad [data-ctl]").forEach((b) => {
 // ---------------------------------------------------------------------------
 // Ambient traffic: more people, more cars
 // ---------------------------------------------------------------------------
-// The collector: drives past every shop once while the app is open and
-// collects its 💰 for you, keeping a 15% cut. Unlocks at Town; at Megalopolis
+// The collector: drives past every shop and factory once while the app is open
+// and collects their 💰 and 🧱 for you, keeping a 15% cut. Unlocks at Town; at Megalopolis
 // two trucks go out, starting on opposite sides of town.
 const COLLECTOR_TIER = 2;
 const TWO_TRUCK_TIER = 5;
@@ -1054,10 +1121,10 @@ function collectorCard() {
   if (city.tier < COLLECTOR_TIER) {
     body = "<p class='muted'>Unlocks when your town reaches " + TIERS[COLLECTOR_TIER].icon + " " + TIERS[COLLECTOR_TIER].name + " (" + TIERS[COLLECTOR_TIER].pop + " people).</p>";
   } else if (c) {
-    body = "<p>On the road: " + (c.total - c.pool.size) + " of " + c.total + " shops visited, +" + c.kept + " 💰 so far.</p>";
+    body = "<p>On the road: " + (c.total - c.pool.size) + " of " + c.total + " stops visited, +" + c.kept + " 💰" + (c.keptGoods ? " +" + c.keptGoods + " 🧱" : "") + " so far.</p>";
   } else {
     body = "<p class='muted'>" + (two ? "Two trucks start on opposite sides of town and drive" : "Drives") +
-      " past every shop once, collecting its 💰 for you and keeping " + Math.round(COLLECTOR_CUT * 100) + "% as a fee. Works while the app is open.</p>" +
+      " past every shop and factory once, collecting their 💰 and 🧱 for you and keeping " + Math.round(COLLECTOR_CUT * 100) + "% as a fee. Works while the app is open.</p>" +
       (two ? "" : "<p class='muted'>" + TIERS[TWO_TRUCK_TIER].icon + " At " + TIERS[TWO_TRUCK_TIER].name + ", two trucks go out at once.</p>") +
       "<button id='hireBtn' class='gold'>" + (two ? "Hire 2 collectors" : "Hire the collector") + "</button>";
   }
@@ -1074,20 +1141,23 @@ function townEnds() {
 }
 
 function hireCollector() {
-  const shops = city.lots.filter((l) => l.kind === "com");
+  const shops = city.lots.filter((l) => l.kind === "com" || l.kind === "ind");
   if (ui.collector || !shops.length || city.tier < COLLECTOR_TIER) return;
-  const c = { city, kept: 0, fee: 0, lastStop: performance.now(), pool: new Set(shops), total: shops.length };
+  const c = { city, kept: 0, fee: 0, keptGoods: 0, feeGoods: 0, lastStop: performance.now(), pool: new Set(shops), total: shops.length };
   const onCollect = (lot) => {
     c.lastStop = performance.now();
-    if (!City.bagReady(lot)) return;
+    if (!city.bagReady(lot)) return;
+    const goods = lot.kind === "ind";
     const amount = Math.floor(lot.coins);
-    const keep = Math.round(amount * (1 - COLLECTOR_CUT));
-    lot.coins -= amount;
-    city.coins += keep;
-    city.stats.collected += keep;
-    c.kept += keep;
-    c.fee += amount - keep;
-    floater(renderer.bubbleAnchor(lot, viewport.getViewPoint()), "+" + keep + " 💰");
+    const keep = city.collect(lot, COLLECTOR_CUT);
+    if (goods) {
+      c.keptGoods += keep;
+      c.feeGoods += amount - keep;
+    } else {
+      c.kept += keep;
+      c.fee += amount - keep;
+    }
+    floater(renderer.bubbleAnchor(lot, viewport.getViewPoint()), "+" + keep + (goods ? " 🧱" : " 💰"));
   };
   const starts = city.tier >= TWO_TRUCK_TIER ? townEnds() : [null];
   c.trucks = starts.map((start) => new CollectorTruck(city.layout.graph, c.pool, onCollect, start));
@@ -1109,8 +1179,8 @@ function updateCollector() {
     showModal({
       icon: "🚚",
       title: "Collection done",
-      body: "<div class='gains'><span class='gain'>+" + c.kept + " 💰</span></div><p class='muted'>" +
-        (c.trucks.length > 1 ? "The collectors kept " : "The collector kept ") + c.fee + " 💰 as their fee.</p>",
+      body: "<div class='gains'><span class='gain'>+" + c.kept + " 💰</span>" + (c.keptGoods ? "<span class='gain'>+" + c.keptGoods + " 🧱</span>" : "") + "</div><p class='muted'>" +
+        (c.trucks.length > 1 ? "The collectors kept " : "The collector kept ") + c.fee + " 💰" + (c.feeGoods ? " and " + c.feeGoods + " 🧱" : "") + " as their fee.</p>",
       button: "Thanks!",
     });
   }
@@ -1232,11 +1302,11 @@ document.addEventListener("visibilitychange", () => {
 });
 window.addEventListener("pagehide", saveGame);
 
-// Progress made while the app was closed (up to 3 hours).
+// Progress made while the app was closed (up to 1 hour).
 function catchUp() {
   const away = (Date.now() - city.lastSeen) / 1000;
   if (away < 60) return;
-  const s = city.simulate(Math.min(away, 3 * 3600));
+  const s = city.simulate(Math.min(away, 3600));
   city.lastSeen = Date.now();
   saveGame();
   if (s.pop > 0 || s.roads > 0 || s.built > 0) {

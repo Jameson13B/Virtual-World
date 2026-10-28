@@ -44,6 +44,7 @@ class Shop {
 const SHOP_COLORS = ["#4aa3df", "#f4b942", "#5cc28f", "#e57373", "#9b7fd1"];
 const HOUSE_HEIGHTS = [0, 70, 130, 200];
 const SHOP_HEIGHTS = [0, 60, 120, 230];
+const RARITY_GLOW = { uncommon: "34,197,94", rare: "59,130,246", legendary: "245,158,11" };
 
 class CityRenderer {
   constructor(city) {
@@ -105,6 +106,7 @@ class CityRenderer {
     const cached = this.visuals.get(lot.id);
     if (cached && cached.key === key) return cached.items;
     const pick = (arr) => arr[hashInts(this.city.seed, lot.id) % arr.length];
+    const road = this.city.layout.graph.segments[lot.segIndex];
     let items = [];
     if (lvl >= 1) {
       if (lot.kind === "res") {
@@ -112,11 +114,11 @@ class CityRenderer {
       } else if (lot.kind === "com") {
         const roof = lvl === 3 ? "#7fb3d5" : pick(SHOP_COLORS);
         items = [new Shop(lot.poly, SHOP_HEIGHTS[lvl], roof, { walls: lvl === 3 ? "#dfe9f2" : "#f4f1ea" })];
+      } else if (lot.kind === "ind") {
+        items = [new LotModel(lot, road, "factory", lvl)];
       } else if (lot.kind === "special") {
-        const spec = SPECIALS[lot.special];
-        if (spec.style === "civic") {
-          items = [new Shop(lot.poly, spec.height, spec.color, { icon: spec.icon })];
-        } else if (spec.style === "park") {
+        items = [new LotModel(lot, road, lot.special)];
+        if (lot.special === "park") {
           const pts = lot.poly.points;
           for (let i = 0; i < 4; i++) {
             const h = hashInts(lot.id, i, 77);
@@ -143,7 +145,7 @@ class CityRenderer {
     // lot grounds
     for (const lot of city.lots) {
       if (!visible(lot.poly.bounds)) continue;
-      this.#drawLotGround(ctx, lot, placing, now, z);
+      this.#drawLotGround(ctx, lot, placing, now, z, vp);
     }
 
     // road under construction
@@ -229,12 +231,18 @@ class CityRenderer {
     }
     const keyed = items.map((item) => ({ item, d: distance(item.base.points[0], vp) }));
     keyed.sort((a, b) => b.d - a.d);
-    for (const { item } of keyed) item.draw(ctx, vp);
+    for (const { item } of keyed) item.draw(ctx, vp, now);
 
     // coin bubbles and highlights on top
     for (const lot of city.lots) {
       if (!visible(lot.poly.bounds)) continue;
-      if (City.bagReady(lot)) this.#drawBubble(ctx, lot, vp, z, now);
+      if (city.bagReady(lot)) this.#drawBubble(ctx, lot, vp, z, now);
+      if (placing && lot.kind && lot.kind !== "special") {
+        // a special can replace this building too
+        ctx.setLineDash([16, 12]);
+        lot.poly.draw(ctx, { fill: "rgba(0,0,0,0)", stroke: "rgba(250,204,21,0.8)", lineWidth: 5 * Math.max(1, z * 0.6) });
+        ctx.setLineDash([]);
+      }
     }
     if (selected) {
       selected.poly.draw(ctx, { fill: "rgba(0,0,0,0)", stroke: "#facc15", lineWidth: 6 * Math.max(1, z * 0.6) });
@@ -253,7 +261,7 @@ class CityRenderer {
   }
 
   bubbleAnchor(lot, vp) {
-    const h = SHOP_HEIGHTS[Math.max(1, lot.effectiveLevel)] * 0.6;
+    const h = lot.kind === "ind" ? 34 + lot.level * 8 : SHOP_HEIGHTS[Math.max(1, lot.effectiveLevel)] * 0.6;
     return getFake3dPoint(lot.center, vp, h + 30);
   }
 
@@ -277,16 +285,16 @@ class CityRenderer {
     ctx.fillStyle = "rgba(255,255,255,0.95)";
     ctx.fill();
     ctx.lineWidth = 3 * Math.max(1, z * 0.6);
-    ctx.strokeStyle = "#f59e0b";
+    ctx.strokeStyle = lot.kind === "ind" ? "#a16207" : "#f59e0b";
     ctx.stroke();
     ctx.font = r * 1.1 + "px serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText("💰", 0, bob + 1);
+    ctx.fillText(lot.kind === "ind" ? "📦" : "💰", 0, bob + 1);
     ctx.restore();
   }
 
-  #drawLotGround(ctx, lot, placing, now, z) {
+  #drawLotGround(ctx, lot, placing, now, z, vp) {
     const empty = !lot.kind;
     if (lot.building > 0) {
       lot.poly.draw(ctx, { fill: "#b08b5a", stroke: "#8a6a40", lineWidth: 3 });
@@ -307,17 +315,17 @@ class CityRenderer {
       }
       return;
     }
-    if (lot.kind === "special") {
-      const spec = SPECIALS[lot.special];
-      if (spec.style === "park") {
-        lot.poly.draw(ctx, { fill: "#5fae4f", stroke: "#3f8a35", lineWidth: 4 });
-      } else if (spec.style === "plaza") {
-        lot.poly.draw(ctx, { fill: "#e3dccb", stroke: "#c8bfa8", lineWidth: 4 });
-        ctx.font = "64px serif";
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        uprightText(ctx, spec.icon, lot.center.x, lot.center.y);
+    if (lot.kind === "special" || lot.kind === "ind") {
+      const model = this.#visualFor(lot).find((it) => it instanceof LotModel);
+      if (!model) return;
+      lot.poly.draw(ctx, { fill: model.spec.floor, stroke: "rgba(0,0,0,0.12)", lineWidth: 4 });
+      const glow = lot.kind === "special" && RARITY_GLOW[SPECIALS[lot.special].rarity];
+      if (glow) {
+        // a soft rarity-colored halo around the lot
+        const a = 0.35 + 0.2 * Math.sin(now / 500 + lot.id);
+        lot.poly.draw(ctx, { fill: "rgba(0,0,0,0)", stroke: "rgba(" + glow + "," + a.toFixed(2) + ")", lineWidth: 12 * Math.max(1, z * 0.5) });
       }
+      model.drawGround(ctx, vp, now);
     } else if (lot.kind === "res") {
       lot.poly.draw(ctx, { fill: "#6fae5a", stroke: "rgba(0,0,0,0)", lineWidth: 0 }); // garden
     } else if (lot.kind === "com") {

@@ -58,7 +58,7 @@ class Lot {
     this.segIndex = segIndex;
     this.center = average(average(poly.points[0], poly.points[1]), average(poly.points[2], poly.points[3]));
     // game state
-    this.kind = null; // null | "res" | "com" | "special"
+    this.kind = null; // null | "res" | "com" | "ind" | "special"
     this.level = 0;
     this.building = 0; // seconds of construction left
     this.coins = 0;

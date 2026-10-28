@@ -6,6 +6,18 @@
 
 const CHANGELOG = [
   {
+    version: "0.8.0",
+    notes: [
+      "🏭 Factories! From Town on, some job buildings become factories that make 🧱 – tap their 📦 crates (the 🚚 collector grabs them too)",
+      "🏟️ Special buildings got real 3D models: a spinning Ferris wheel, splashing fountain, Sky Tower with a revolving restaurant, a stadium doing the wave and more",
+      "✨ Tap a special building for its new info card",
+      "🎒 Place specials on top of homes and shops to replace them, or send a placed special back to your bag",
+      "💰 Big numbers now read 1.2M and 3.4B instead of piling up as thousands of K",
+      "🌙 Your town keeps growing for 1 hour while you're away (was 3) – check in more often",
+      "🏪 Shops earn coins half as fast, so they take about twice as long to fill up",
+    ],
+  },
+  {
     version: "0.7.0",
     notes: [
       "📷 Scans and the 🎁 daily gift now grow with your town – a scan is worth about a third of a road at any size",
