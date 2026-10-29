@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // City state + economy.
 //
-//   🧱 materials  -> roads get built automatically when you can afford one
+//   🧱 materials  -> when you can afford a road, you pick where it goes
 //   new roads     -> new empty lots
 //   empty lots    -> develop on their own into homes 🏠, shops 🏪 or factories 🏭
 //   homes         -> room for people 👥     shops -> jobs + 💰 to collect
@@ -37,6 +37,7 @@ const SPECIAL_IDS = Object.keys(SPECIALS);
 
 // Factories start appearing at Town, as about 1 in 4 of the job buildings.
 const INDUSTRY_TIER = 2;
+const THREE_ROADS_TIER = 3; // City: pick from 3 roads instead of 2
 const INDUSTRY_SHARE = 0.25;
 
 const NAME_PARTS = {
@@ -70,6 +71,7 @@ class City {
     this.coins = 0;
     this.pop = 0;
     this.roadJob = null;
+    this.roadChoice = null; // roads waiting for the player to pick one
     this.inventory = [];
     this.scanned = {};
     this.daily = { last: null, streak: 0 };
@@ -171,7 +173,8 @@ class City {
     const events = [];
     this.goodsRate = this.factoryRate();
 
-    // Roads build themselves whenever there are enough materials.
+    // Once a road is affordable the town offers a few and waits for the player
+    // to pick one (even while the app is closed). Materials keep piling up.
     if (this.roadJob) {
       this.roadJob.t += dt;
       if (this.roadJob.t >= this.roadJob.duration) {
@@ -180,18 +183,12 @@ class City {
         this.version++;
         events.push({ type: "road", lots: lots.length });
       }
-    } else if (this.materials >= this.roadCost()) {
-      const next = this.layout.nextRoad();
-      if (next) {
-        this.materials -= this.roadCost();
-        this.roadJob = {
-          a: { x: next.a.x, y: next.a.y },
-          b: { x: next.b.x, y: next.b.y },
-          t: 0,
-          duration: this.roadDuration(),
-        };
+    } else if (!this.roadChoice && this.materials >= this.roadCost()) {
+      const options = this.layout.roadOptions(this.tierReached >= THREE_ROADS_TIER ? 3 : 2);
+      if (options.length) {
+        this.roadChoice = options.map((o) => ({ a: { x: o.a.x, y: o.a.y }, b: { x: o.b.x, y: o.b.y }, lots: o.lots.length, connects: o.connects }));
         this.version++;
-        events.push({ type: "roadStart" });
+        events.push({ type: "roadChoice" });
       }
     }
 
@@ -284,6 +281,17 @@ class City {
   }
 
   // ---- player actions -----------------------------------------------------
+  // Builds the i-th offered road. Every option costs the same.
+  chooseRoad(i) {
+    const o = this.roadChoice?.[i];
+    if (!o || this.roadJob || this.materials < this.roadCost()) return false;
+    this.materials -= this.roadCost();
+    this.roadJob = { a: o.a, b: o.b, t: 0, duration: this.roadDuration() };
+    this.roadChoice = null;
+    this.version++;
+    return true;
+  }
+
   // A shop holds up to 30 coins per level and fills in ~1000 s / appeal. A
   // factory holds 30 minutes of its 🧱. The 💰 bag / 📦 crate appears (and can
   // be collected) once it's at least a quarter full.
@@ -406,6 +414,7 @@ class City {
       coins: this.coins,
       pop: this.pop,
       roadJob: this.roadJob,
+      roadChoice: this.roadChoice,
       inventory: this.inventory,
       scanned: this.scanned,
       daily: this.daily,
@@ -428,7 +437,7 @@ class City {
       lot.coins = s[3];
       lot.special = s[4] || null;
     });
-    for (const k of ["materials", "coins", "pop", "roadJob", "inventory", "scanned", "daily", "market", "tierReached", "stats", "createdAt", "lastSeen"]) {
+    for (const k of ["materials", "coins", "pop", "roadJob", "roadChoice", "inventory", "scanned", "daily", "market", "tierReached", "stats", "createdAt", "lastSeen"]) {
       if (data[k] !== undefined) city[k] = data[k];
     }
     return city;

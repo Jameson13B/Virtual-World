@@ -112,8 +112,10 @@ class CityLayout {
     return this.graph.getSegmentsWithPoint(p).map((s) => normalize(subtract(s.p1 === p ? s.p2 : s.p1, p)));
   }
 
-  // Proposes the next road. Deterministic for a given seed + existing roads.
-  nextRoad() {
+  // Proposes up to `count` different next roads for the player to pick from.
+  // Deterministic for a given seed + existing roads, and the first option is
+  // the road the town would have grown on its own.
+  roadOptions(count = 1) {
     const k = this.graph.segments.length;
     const rng = createRNG(hashInts(this.seed, 7919, k));
     const pool = [];
@@ -121,9 +123,10 @@ class CityLayout {
       const w = [0, 6, 2, 1, 0][Math.min(4, this.degree(p))];
       for (let i = 0; i < w; i++) pool.push(p);
     }
-    if (!pool.length) return null;
+    const options = [];
+    if (!pool.length) return options;
 
-    for (let attempt = 0; attempt < 160; attempt++) {
+    for (let attempt = 0; attempt < 160 * count && options.length < count; attempt++) {
       const a = pool[Math.floor(rng() * pool.length)];
       const dirs = this.incidentDirs(a);
       let base, jitter;
@@ -148,9 +151,25 @@ class CityLayout {
         end = near;
         snapped = true;
       }
-      if (this.isValidRoad(a, end, snapped)) return { a, b: end };
+      if (!this.isValidRoad(a, end, snapped)) continue;
+      // Options must be clearly different roads, not the same one twice.
+      const mid = average(a, end);
+      if (options.some((o) => distance(average(o.a, o.b), mid) < 260)) continue;
+      options.push({ a, b: end, connects: snapped, lots: this.previewLots(a, end) });
     }
-    return null;
+    return options;
+  }
+
+  // The lots a road from a to b would open, without keeping the road.
+  previewLots(a, b) {
+    const g = this.graph, before = { points: g.points.length, lots: this.lots.length, version: g.version };
+    const lots = this.addRoad(a, b).map((l) => l.poly);
+    g.segments.pop();
+    g.points.length = before.points;
+    g.version = before.version;
+    this.roadRects.pop();
+    this.lots.length = before.lots;
+    return lots;
   }
 
   isValidRoad(a, e, snapped) {

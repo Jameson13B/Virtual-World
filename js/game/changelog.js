@@ -6,6 +6,14 @@
 
 const CHANGELOG = [
   {
+    version: "0.9.0",
+    notes: [
+      "🛣️ You choose where roads go! When you have enough 🧱, pick one of 2 ghost roads on the map – each shows how many new lots it opens",
+      "🏙️ From City on, you get 3 roads to choose from",
+      "⏸️ Road building waits for your pick, even while you're away – your 🧱 keeps piling up meanwhile",
+    ],
+  },
+  {
     version: "0.8.0",
     notes: [
       "🏭 Factories! From Town on, some job buildings become factories that make 🧱 – tap their 📦 crates (the 🚚 collector grabs them too)",

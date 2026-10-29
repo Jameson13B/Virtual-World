@@ -63,6 +63,11 @@ class CityRenderer {
     const job = this.city.roadJob;
     this.pending = job ? new Segment(new Point(job.a.x, job.a.y), new Point(job.b.x, job.b.y)) : null;
     this.pendingEnvelope = this.pending ? new Envelope(this.pending, ROAD_W, 10) : null;
+    // Roads on offer: ghost roads with the lots each would open.
+    this.choices = (this.city.roadChoice || []).map((o) => {
+      const seg = new Segment(new Point(o.a.x, o.a.y), new Point(o.b.x, o.b.y));
+      return { seg, envelope: new Envelope(seg, ROAD_W, 10), lots: this.city.layout.previewLots(seg.p1, seg.p2) };
+    });
   }
 
   // ---- wilderness: an endless procedural forest, cleared where the city is ----
@@ -134,7 +139,7 @@ class CityRenderer {
   }
 
   // ---- drawing ---------------------------------------------------------------
-  draw(ctx, viewport, { placing = false, selected = null, cars = [], player = null, floaters = [], now = 0 } = {}) {
+  draw(ctx, viewport, { placing = false, roadPick = -1, selected = null, cars = [], player = null, floaters = [], now = 0 } = {}) {
     const city = this.city;
     if (city.version !== this.version) this.#rebuild();
     const view = viewport.getVisibleBounds();
@@ -233,6 +238,8 @@ class CityRenderer {
     keyed.sort((a, b) => b.d - a.d);
     for (const { item } of keyed) item.draw(ctx, vp, now);
 
+    if (this.choices.length && !placing) this.#drawChoices(ctx, roadPick, z, now);
+
     // coin bubbles and highlights on top
     for (const lot of city.lots) {
       if (!visible(lot.poly.bounds)) continue;
@@ -292,6 +299,60 @@ class CityRenderer {
     ctx.textBaseline = "middle";
     ctx.fillText(lot.kind === "ind" ? "📦" : "💰", 0, bob + 1);
     ctx.restore();
+  }
+
+  // Dashed ghost roads numbered 1–3, each with the outlines of its new lots.
+  // The picked one (if any) is solid yellow; the others fade back.
+  #drawChoices(ctx, pick, z, now) {
+    const pulse = 0.5 + 0.5 * Math.sin(now / 300);
+    this.choices.forEach((c, i) => {
+      const on = pick === i, dim = pick >= 0 && !on;
+      ctx.globalAlpha = dim ? 0.35 : 1;
+      c.envelope.draw(ctx, { fill: on ? "rgba(250,204,21,0.45)" : "rgba(255,255,255,0.35)", stroke: "rgba(0,0,0,0)" });
+      ctx.beginPath();
+      for (const s of c.envelope.poly.segments) {
+        ctx.moveTo(s.p1.x, s.p1.y);
+        ctx.lineTo(s.p2.x, s.p2.y);
+      }
+      for (const poly of c.lots) {
+        const pts = poly.points;
+        ctx.moveTo(pts[0].x, pts[0].y);
+        for (let j = 1; j < pts.length; j++) ctx.lineTo(pts[j].x, pts[j].y);
+        ctx.closePath();
+      }
+      ctx.setLineDash([18, 12]);
+      ctx.lineDashOffset = -now / 40;
+      ctx.lineWidth = on ? 7 : 5;
+      ctx.strokeStyle = on ? "#facc15" : "rgba(255,255,255," + (0.6 + pulse * 0.4) + ")";
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.lineDashOffset = 0;
+
+      const m = average(c.seg.p1, c.seg.p2), r = 30 * Math.max(1, z * 0.7);
+      ctx.beginPath();
+      ctx.arc(m.x, m.y, r, 0, Math.PI * 2);
+      ctx.fillStyle = on ? "#facc15" : "#0f172a";
+      ctx.fill();
+      ctx.lineWidth = 5;
+      ctx.strokeStyle = on ? "#0f172a" : "#facc15";
+      ctx.stroke();
+      ctx.fillStyle = on ? "#0f172a" : "#facc15";
+      ctx.font = "bold " + r * 1.2 + "px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      uprightText(ctx, String(i + 1), m.x, m.y);
+      ctx.globalAlpha = 1;
+    });
+  }
+
+  // Which offered road (index) is at a world point, or -1.
+  choiceAt(p, z) {
+    let best = -1, bestD = ROAD_W * 0.8 + 20 * Math.max(1, z * 0.7);
+    this.choices.forEach((c, i) => {
+      const d = c.seg.distanceToPoint(p);
+      if (d < bestD) [best, bestD] = [i, d];
+    });
+    return best;
   }
 
   #drawLotGround(ctx, lot, placing, now, z, vp) {

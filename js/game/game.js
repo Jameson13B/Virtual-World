@@ -6,7 +6,7 @@
 const $ = (sel) => document.querySelector(sel);
 const SAVE_KEY = "vw.city";
 const PREFS_KEY = "vw.gamePrefs";
-const VERSION = "0.8.0";
+const VERSION = "0.9.0";
 
 const canvas = $("#cityCanvas");
 const ctx = canvas.getContext("2d");
@@ -21,7 +21,7 @@ let city = null;
 let renderer = null;
 let visit = null; // { city, renderer } while looking at someone else's town
 const online = new Online(window.VW_CONFIG);
-const ui = { placing: null, selected: null, floaters: [], cars: [], drive: null, follow: null, collector: null };
+const ui = { placing: null, roadPick: null, focus: null, selected: null, floaters: [], cars: [], drive: null, follow: null, collector: null };
 
 function readJSON(key, fallback = null) {
   try {
@@ -181,12 +181,21 @@ function updateTopbar() {
       bar.classList.add("building");
       bar.querySelector(".fill").style.width = p * 100 + "%";
       bar.querySelector(".label").textContent = "🚧 Building a new road… " + Math.round(p * 100) + "%";
+    } else if (city.roadChoice) {
+      bar.classList.remove("building");
+      bar.classList.add("choose");
+      bar.querySelector(".fill").style.width = "100%";
+      bar.querySelector(".label").textContent = "🛣️ Choose your next road! Tap here";
     } else {
       const cost = city.roadCost();
-      bar.classList.remove("building");
+      bar.classList.remove("building", "choose");
       bar.querySelector(".fill").style.width = clamp(city.materials / cost, 0, 1) * 100 + "%";
       bar.querySelector(".label").textContent = "🛣️ Next road: " + Math.floor(city.materials) + " / " + cost + " 🧱";
     }
+  }
+  if (ui.roadPick != null) {
+    if (visit || !city.roadChoice) stopRoadPick();
+    else updateRoadBuild();
   }
   $("#compassBtn").hidden = !viewport.angle;
   const chip = $("#collectorChip");
@@ -197,6 +206,9 @@ function updateTopbar() {
 }
 
 $("#tierBadge").addEventListener("click", openMilestones);
+$("#roadBar").addEventListener("click", () => {
+  if (!visit && city.roadChoice && !ui.placing) startRoadPick();
+});
 // Tap the 🚚 chip to fly to the collector and follow it (until you pan away).
 // With two trucks, each tap switches to the other one.
 $("#collectorChip").addEventListener("click", () => {
@@ -282,8 +294,10 @@ function handleEvents(events) {
       toast("🛣️ New road finished! " + e.lots + " new lots to build on");
       buzz(40);
       saveGame();
-    } else if (e.type === "roadStart") {
-      toast("🚧 Construction crews started a new road");
+    } else if (e.type === "roadChoice") {
+      toast("🛣️ Enough 🧱 for a new road – choose where it goes!");
+      buzz(30);
+      saveGame();
     } else if (e.type === "tier") {
       const t = TIERS[e.tier];
       showModal({
@@ -314,6 +328,11 @@ function onTap(world) {
       if (!city.bagReady(lot)) continue;
       if (distance(renderer.bubbleAnchor(lot, vp), world) < 34 * Math.max(1, z * 0.75)) return collect(lot);
     }
+  }
+
+  if (!visit && !ui.placing && city.roadChoice) {
+    const i = renderer.choiceAt(world, z);
+    if (i >= 0) return startRoadPick(i);
   }
 
   const lot = active.city.lots.find((l) => l.poly.containsPoint(world));
@@ -628,8 +647,66 @@ $("#itemsBtn").addEventListener("click", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Choosing the next road
+// ---------------------------------------------------------------------------
+// The banner lists every offered road; tap one (or its ghost on the map) to
+// look at it, then Build. `ui.roadPick` is the picked index, -1 for none yet.
+function startRoadPick(i = -1) {
+  if (!city.roadChoice) return;
+  stopPlacing();
+  closeSheet();
+  ui.roadPick = i;
+  ui.selected = null;
+  renderRoadBanner();
+  // Frame the roads in the part of the screen the banner and bottom bar don't cover.
+  const opts = city.roadChoice;
+  const shown = i >= 0 ? [opts[i]] : opts;
+  const b = boundsOf(shown.flatMap((o) => [new Point(o.a.x, o.a.y), new Point(o.b.x, o.b.y)]));
+  const pad = LOT_DEPTH + ROAD_W;
+  const top = $("#roadBanner").getBoundingClientRect().bottom, bottom = $("#bottombar").getBoundingClientRect().top;
+  const w = b.maxX - b.minX + pad * 2, h = b.maxY - b.minY + pad * 2;
+  const zoom = clamp(Math.max((w * 1.15) / viewport.width, (h * 1.15) / Math.max(120, bottom - top), 1.3), viewport.minZoom, viewport.maxZoom);
+  const shift = scale(viewport.toWorldVector(new Point(0, (top + bottom) / 2 - viewport.height / 2)), zoom / viewport.zoom);
+  ui.focus = { at: scale(subtract(new Point((b.minX + b.maxX) / 2, (b.minY + b.maxY) / 2), shift), -1), zoom };
+}
+
+function renderRoadBanner() {
+  const opts = city.roadChoice || [];
+  $("#roadOptions").innerHTML = opts.map((o, i) =>
+    "<button data-road='" + i + "' class='road-opt" + (ui.roadPick === i ? " on" : "") + "'><b>" + (i + 1) + "</b>" +
+    "<span>" + o.lots + " lots" + (o.connects ? " · 🔁" : "") + "</span></button>").join("");
+  $("#roadOptions").querySelectorAll("[data-road]").forEach((btn) =>
+    btn.addEventListener("click", () => startRoadPick(+btn.dataset.road)));
+  $("#roadHint").textContent = opts.some((o) => o.connects) ? "🔁 = joins up with another road" : "Each road costs the same";
+  $("#roadBanner").hidden = false;
+  updateRoadBuild();
+}
+
+function updateRoadBuild() {
+  const cost = city.roadCost(), afford = city.materials >= cost;
+  const build = $("#roadBuild");
+  build.disabled = ui.roadPick < 0 || !afford;
+  build.textContent = !afford ? "Need " + cost + " 🧱" : ui.roadPick < 0 ? "Pick a road" : "Build road " + (ui.roadPick + 1) + " · " + cost + " 🧱";
+}
+
+function stopRoadPick() {
+  ui.roadPick = null;
+  $("#roadBanner").hidden = true;
+}
+$("#roadCancel").addEventListener("click", stopRoadPick);
+$("#roadBuild").addEventListener("click", () => {
+  const i = ui.roadPick;
+  if (!city.chooseRoad(i)) return;
+  stopRoadPick();
+  toast("🚧 Construction crews started road " + (i + 1));
+  buzz(40);
+  saveGame();
+});
+
 function startPlacing(id) {
   closeSheet();
+  stopRoadPick();
   ui.placing = id;
   $("#placeText").textContent = "Tap where your " + SPECIALS[id].icon + " " + SPECIALS[id].name + " goes";
   $("#placeBanner").hidden = false;
@@ -1046,7 +1123,7 @@ function showWelcome(fresh) {
     body:
       "<p>Your town is tiny: one road in the middle of nowhere. Help it grow!</p>" +
       "<p style='text-align:left'>📷 <b>Scan QR codes</b> anywhere you see them – menus, posters, parking meters, packaging. Every new code feeds your town.<br>" +
-      "🛣️ <b>Materials build roads</b> automatically.<br>" +
+      "🛣️ <b>Materials build roads</b> – you pick where each one goes.<br>" +
       "🏠 <b>New roads bring homes and shops</b>, which bring people.<br>" +
       "💰 <b>Tap coin bubbles</b> on shops to collect.<br>" +
       "🎁 Claim your <b>daily gift</b> to keep a streak.</p>" +
@@ -1215,7 +1292,7 @@ function updateTraffic(active) {
 // ---------------------------------------------------------------------------
 // Main loop
 // ---------------------------------------------------------------------------
-const touch = new TouchCamera(viewport, { onTap, onPan: () => (ui.unrotate = ui.follow = null) });
+const touch = new TouchCamera(viewport, { onTap, onPan: () => (ui.unrotate = ui.follow = ui.focus = null) });
 // iOS Home Screen apps can lay the page out shorter than the screen (by the
 // status bar's height), leaving a strip at the bottom that nothing can draw
 // into. Measure it so the CSS can paint it to match the bottom bar. Safari tabs
@@ -1248,6 +1325,11 @@ function loop(now) {
       viewport.zoom += (Math.min(viewport.zoom, 1.6) - viewport.zoom) * 0.08;
     }
   }
+  if (ui.focus) {
+    viewport.offset = lerp2D(viewport.offset, ui.focus.at, 0.12);
+    viewport.zoom += (ui.focus.zoom - viewport.zoom) * 0.12;
+    if (distance(viewport.offset, ui.focus.at) < 2 && Math.abs(viewport.zoom - ui.focus.zoom) < 0.01) ui.focus = null;
+  }
   if (ui.unrotate) {
     viewport.angle *= 0.8;
     if (Math.abs(viewport.angle) < 0.005) [viewport.angle, ui.unrotate] = [0, false];
@@ -1275,6 +1357,7 @@ function loop(now) {
   viewport.reset("#3f8f3a");
   active.renderer.draw(ctx, viewport, {
     placing: !!ui.placing,
+    roadPick: ui.roadPick ?? -1,
     selected: ui.selected,
     cars: ui.collector && !visit ? [...ui.cars, ...ui.collector.trucks] : ui.cars,
     player: ui.drive,
@@ -1309,7 +1392,8 @@ function catchUp() {
   const s = city.simulate(Math.min(away, 3600));
   city.lastSeen = Date.now();
   saveGame();
-  if (s.pop > 0 || s.roads > 0 || s.built > 0) {
+  const waiting = city.roadChoice ? "<p class='muted'>🛣️ A new road is ready – choose where it goes!</p>" : "";
+  if (s.pop > 0 || s.roads > 0 || s.built > 0 || waiting) {
     const hours = away / 3600;
     showModal({
       icon: "🌙",
@@ -1318,7 +1402,7 @@ function catchUp() {
         "<div class='gains'>" + (s.pop ? "<span class='gain'>+" + s.pop + " 👥</span>" : "") +
         (s.built ? "<span class='gain'>+" + s.built + " 🏠</span>" : "") +
         (s.roads ? "<span class='gain'>+" + s.roads + " 🛣️</span>" : "") +
-        (s.coins ? "<span class='gain'>+" + s.coins + " 💰</span>" : "") + "</div>",
+        (s.coins ? "<span class='gain'>+" + s.coins + " 💰</span>" : "") + "</div>" + waiting,
       button: "Welcome back!",
     });
   }

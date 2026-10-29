@@ -12,7 +12,7 @@ Its roads, buildings and rendering engine come from freeCodeCamp's
 ```
 📷 scan codes / 🎁 daily gift / 🏪 market
         ↓  🧱 materials
-🛣️ roads build themselves (each player's road network is unique)
+🛣️ pick your next road from 2 options (3 from City); each player's road network is unique
         ↓  new empty lots
 🏠 homes, 🏪 shops and 🏭 factories develop by demand (homes need jobs, shops need customers)
         ↓
@@ -80,7 +80,8 @@ sandbox.html + js/main.js    the original editor/driving/AI sandbox (hidden extr
 
 ### How cities stay unique but shareable
 
-`CityLayout.nextRoad()` grows the k-th road from the town's seed and the roads that already exist.
+`CityLayout.roadOptions()` proposes the k-th road's options from the town's seed and the roads that already exist;
+the player's pick is saved in the road graph. A pending choice waits (even offline) until the player picks.
 Its geometry uses only `+ - * /` and `sqrt`, which give identical results on every device,
 so a town rebuilt from a share code matches on any phone. Share codes also carry the road graph itself,
 so future changes to the growth algorithm won't break old links.

@@ -122,6 +122,34 @@ button.big { width: 100%; padding: 14px; font-size: 17px; }
 }
 #visitBanner button, #placeBanner button { padding: 6px 12px; border-radius: 99px; }
 #placeBanner { border-color: #facc15; }
+#roadBanner {
+  position: fixed;
+  top: calc(var(--safe-top) + 112px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(360px, calc(100vw - 32px));
+  display: flex; flex-direction: column; gap: 8px;
+  background: var(--panel);
+  border: 2px solid #facc15;
+  border-radius: 18px;
+  padding: 10px 12px;
+  z-index: 6;
+}
+#roadBanner .road-head { display: flex; align-items: center; justify-content: space-between; }
+#roadBanner .road-head button { padding: 4px 10px; border-radius: 99px; }
+#roadOptions { display: flex; gap: 8px; }
+.road-opt {
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 4px; border-radius: 12px; border: 2px solid var(--surface-2);
+}
+.road-opt b { font-size: 18px; line-height: 1.1; color: #facc15; }
+.road-opt span { font-size: 12.5px; }
+.road-opt.on { border-color: #facc15; background: rgba(250, 204, 21, 0.18); }
+#roadBanner .big { margin: 0; padding: 10px; font-size: 16px; }
+#roadHint { text-align: center; font-size: 12px; margin-top: -2px; }
+.road-bar.choose { cursor: pointer; }
+.road-bar.choose .fill { background: linear-gradient(90deg, #ca8a04, #facc15, #ca8a04); background-size: 200% 100%; animation: roadPulse 1.6s linear infinite; }
+@keyframes roadPulse { from { background-position: 0 0; } to { background-position: -200% 0; } }
 
 /* ---------- bottom bar ---------- */
 #bottombar {
