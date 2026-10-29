@@ -294,13 +294,17 @@ button.ghost { background: transparent; }
   border-radius: 22px;
   padding: 22px 20px 18px;
   text-align: center;
+  /* Long content (e.g. What's new) scrolls inside the body; title and button stay put. */
+  max-height: calc(100dvh - var(--safe-top) - var(--safe-bottom-in) - 40px);
+  display: flex; flex-direction: column;
   animation: pop 0.35s cubic-bezier(0.2, 1.4, 0.4, 1);
 }
 @keyframes pop { from { transform: scale(0.6); opacity: 0; } }
 #modalIcon { font-size: 64px; line-height: 1.1; animation: wobble 1.2s ease-in-out infinite; }
 @keyframes wobble { 50% { transform: rotate(-8deg) scale(1.08); } }
 #modal h2 { margin: 8px 0 4px; }
-#modalBody { color: #cbd5e1; margin-bottom: 14px; line-height: 1.5; }
+#modalBody { color: #cbd5e1; margin-bottom: 14px; line-height: 1.5; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; min-height: 0; }
+#modalIcon, #modal h2, #modalOk { flex-shrink: 0; }
 .gains { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; margin: 12px 0; }
 .gain { background: var(--surface); border-radius: 12px; padding: 8px 12px; font-weight: 700; font-size: 17px; }
 .item-drop { margin: 10px 0; padding: 12px; border-radius: 14px; border: 2px solid; background: rgba(255, 255, 255, 0.04); }
