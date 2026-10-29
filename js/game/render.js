@@ -9,41 +9,8 @@ function uprightText(ctx, text, x, y, dy = 0, stroke = false) {
   ctx.restore();
 }
 
-// Flat-roofed building (shops, offices, civic buildings).
-class Shop {
-  constructor(poly, height, roof, { icon = null, walls = "#f4f1ea" } = {}) {
-    this.base = poly;
-    this.height = height;
-    this.roof = roof;
-    this.icon = icon;
-    this.walls = walls;
-    const b = poly.bounds;
-    this.bounds = { minX: b.minX - height, minY: b.minY - height, maxX: b.maxX + height, maxY: b.maxY + height };
-  }
-
-  draw(ctx, viewPoint) {
-    const pts = this.base.points;
-    const top = pts.map((p) => getFake3dPoint(p, viewPoint, this.height * 0.6));
-    const sides = pts.map((p, i) => new Polygon([p, pts[(i + 1) % pts.length], top[(i + 1) % pts.length], top[i]]));
-    sides.sort((a, b) => b.distanceToPoint(viewPoint) - a.distanceToPoint(viewPoint));
-
-    this.base.draw(ctx, { fill: "rgba(0,0,0,0.25)", stroke: "rgba(0,0,0,0.15)", lineWidth: 16 });
-    for (const side of sides) side.draw(ctx, { fill: this.walls, stroke: "#b9b2a3", lineWidth: 2 });
-    const ceiling = new Polygon(top);
-    ceiling.draw(ctx, { fill: this.roof, stroke: "rgba(0,0,0,0.25)", lineWidth: 4 });
-    if (this.icon) {
-      const c = average(average(top[0], top[1]), average(top[2], top[3]));
-      ctx.font = "56px serif";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      uprightText(ctx, this.icon, c.x, c.y);
-    }
-  }
-}
-
-const SHOP_COLORS = ["#4aa3df", "#f4b942", "#5cc28f", "#e57373", "#9b7fd1"];
-const HOUSE_HEIGHTS = [0, 70, 130, 200];
-const SHOP_HEIGHTS = [0, 60, 120, 230];
+// Where a shop's 💰 bag floats: over the awning sign, the supermarket's sign and the office podium.
+const SHOP_BAG_HEIGHTS = [0, 46, 80, 30];
 const RARITY_GLOW = { uncommon: "34,197,94", rare: "59,130,246", legendary: "245,158,11" };
 
 class CityRenderer {
@@ -110,15 +77,13 @@ class CityRenderer {
     const key = lot.kind + lvl + lot.special;
     const cached = this.visuals.get(lot.id);
     if (cached && cached.key === key) return cached.items;
-    const pick = (arr) => arr[hashInts(this.city.seed, lot.id) % arr.length];
     const road = this.city.layout.graph.segments[lot.segIndex];
     let items = [];
     if (lvl >= 1) {
       if (lot.kind === "res") {
-        items = [new Building(lot.poly, HOUSE_HEIGHTS[lvl], pick(ROOF_COLORS))];
+        items = [new LotModel(lot, road, "house", lvl)];
       } else if (lot.kind === "com") {
-        const roof = lvl === 3 ? "#7fb3d5" : pick(SHOP_COLORS);
-        items = [new Shop(lot.poly, SHOP_HEIGHTS[lvl], roof, { walls: lvl === 3 ? "#dfe9f2" : "#f4f1ea" })];
+        items = [new LotModel(lot, road, "shop", lvl)];
       } else if (lot.kind === "ind") {
         items = [new LotModel(lot, road, "factory", lvl)];
       } else if (lot.kind === "special") {
@@ -268,7 +233,7 @@ class CityRenderer {
   }
 
   bubbleAnchor(lot, vp) {
-    const h = lot.kind === "ind" ? 34 + lot.level * 8 : SHOP_HEIGHTS[Math.max(1, lot.effectiveLevel)] * 0.6;
+    const h = lot.kind === "ind" ? 34 + lot.level * 8 : SHOP_BAG_HEIGHTS[Math.max(1, lot.effectiveLevel)];
     return getFake3dPoint(lot.center, vp, h + 30);
   }
 
@@ -376,21 +341,15 @@ class CityRenderer {
       }
       return;
     }
-    if (lot.kind === "special" || lot.kind === "ind") {
-      const model = this.#visualFor(lot).find((it) => it instanceof LotModel);
-      if (!model) return;
-      lot.poly.draw(ctx, { fill: model.spec.floor, stroke: "rgba(0,0,0,0.12)", lineWidth: 4 });
-      const glow = lot.kind === "special" && RARITY_GLOW[SPECIALS[lot.special].rarity];
-      if (glow) {
-        // a soft rarity-colored halo around the lot
-        const a = 0.35 + 0.2 * Math.sin(now / 500 + lot.id);
-        lot.poly.draw(ctx, { fill: "rgba(0,0,0,0)", stroke: "rgba(" + glow + "," + a.toFixed(2) + ")", lineWidth: 12 * Math.max(1, z * 0.5) });
-      }
-      model.drawGround(ctx, vp, now);
-    } else if (lot.kind === "res") {
-      lot.poly.draw(ctx, { fill: "#6fae5a", stroke: "rgba(0,0,0,0)", lineWidth: 0 }); // garden
-    } else if (lot.kind === "com") {
-      lot.poly.draw(ctx, { fill: "#9a9a9a", stroke: "rgba(0,0,0,0)", lineWidth: 0 }); // parking lot
+    const model = this.#visualFor(lot).find((it) => it instanceof LotModel);
+    if (!model) return;
+    lot.poly.draw(ctx, { fill: model.spec.floor, stroke: "rgba(0,0,0,0.12)", lineWidth: 4 });
+    const glow = lot.kind === "special" && RARITY_GLOW[SPECIALS[lot.special].rarity];
+    if (glow) {
+      // a soft rarity-colored halo around the lot
+      const a = 0.35 + 0.2 * Math.sin(now / 500 + lot.id);
+      lot.poly.draw(ctx, { fill: "rgba(0,0,0,0)", stroke: "rgba(" + glow + "," + a.toFixed(2) + ")", lineWidth: 12 * Math.max(1, z * 0.5) });
     }
+    model.drawGround(ctx, vp, now);
   }
 }

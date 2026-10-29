@@ -1,5 +1,6 @@
 // ---------------------------------------------------------------------------
-// Hand-built fake-3D models for special buildings and factories, some of them
+// Hand-built fake-3D models for every building in town: homes and shops (a
+// different building per level), factories and specials, some of them
 // animated (fountain jets, a turning Ferris wheel, factory smoke…).
 //
 // A model is drawn in its lot's own frame: x runs along the road, y across it
@@ -45,6 +46,7 @@ class LotModel {
     this.type = type; // a key of LOT_MODELS
     this.level = level;
     this.id = lot.id;
+    this.variant = hashInts(lot.id, 4441); // picks colors, so neighbors differ
     this.base = lot.poly;
     const p = lot.poly.points;
     this.c = lot.center;
@@ -271,6 +273,37 @@ class LotModel {
   // A face through local [x, y, h] points.
   face(pts, color, stroke = null, lineWidth = 2) {
     this.#fill(pts.map(([x, y, h]) => this.p3(x, y, h)), color, stroke, lineWidth);
+  }
+
+  // A rectangle on a wall that faces the road (+y) at y, e.g. a door or shop
+  // window. Only drawn while that wall faces the camera.
+  panel(x0, x1, y, h0, h1, color) {
+    this.#queue((x0 + x1) / 2, y, h0, () => {
+      if (dot(this.v, subtract(this.vp, this.at((x0 + x1) / 2, y))) <= 0) return;
+      this.face([[x0, y, h0], [x1, y, h0], [x1, y, h1], [x0, y, h1]], color, "rgba(0,0,0,0.25)", 1);
+    });
+  }
+
+  // A striped awning sloping out from a front wall at y.
+  awning(x0, x1, y, h, depth, colors) {
+    this.#queue((x0 + x1) / 2, y + depth, h, () => {
+      const n = Math.max(2, Math.round((x1 - x0) / 9));
+      for (let k = 0; k < n; k++) {
+        const a = lerp(x0, x1, k / n), b = lerp(x0, x1, (k + 1) / n);
+        this.face([[a, y, h], [b, y, h], [b, y + depth, h - 9], [a, y + depth, h - 9]], colors[k % colors.length]);
+      }
+      this.strokeLine(this.p3(x0, y + depth, h - 9), this.p3(x1, y + depth, h - 9), "rgba(0,0,0,0.3)", 1.5);
+    });
+  }
+
+  // A bush or small tree: a few stacked blobs.
+  bush(x, y, r, h = r) {
+    this.dot(x, y, h * 0.6, r, "#3f7f3a");
+    this.dot(x - r * 0.25, y - r * 0.2, h, r * 0.7, "#56a04b");
+  }
+
+  pick(arr, salt = 0) {
+    return arr[(this.variant >>> salt) % arr.length];
   }
 
   // A small flag on a pole top at (x, y, h), waving along +x.
@@ -603,6 +636,168 @@ const LOT_MODELS = {
         }
         m.fillDot(center, 5, "#475569");
       });
+    },
+  },
+
+  // ---- homes (level 1–3): cottage, townhouses, apartments -----------------
+  house: {
+    floor: "#6fae5a",
+    ground(m) {
+      const { hw, hd, level } = m;
+      if (level === 1) {
+        m.flat(rectPoints(-6, hd * 0.05, 6, hd), 0, "#d8c9a3");
+        for (let k = 0; k < 6; k++) {
+          const x = (k % 2 ? 1 : -1) * (14 + (k >> 1) * 9);
+          m.fillDot(m.at(x, hd * 0.7), 2.6, ["#f472b6", "#fde047", "#f87171"][k % 3]);
+        }
+      } else if (level === 2) {
+        const n = hw > 64 ? 3 : 2;
+        for (let i = 0; i < n; i++) {
+          const x = lerp(-hw * 0.88, hw * 0.88, (i + 0.5) / n);
+          m.flat(rectPoints(x - 5, hd * 0.2, x + 5, hd), 0, "#d8c9a3");
+        }
+      } else {
+        m.flat(rectPoints(-hw * 0.95, hd * 0.3, hw * 0.95, hd * 0.95), 0, "#cfc8b8");
+        m.flat(rectPoints(-12, hd * 0.3, 12, hd), 0, "#bdb5a3");
+      }
+    },
+    build(m) {
+      const { hw, hd, level } = m;
+      const walls = ["#f3e3c3", "#dbe7f0", "#f6d6d6", "#e0ecd6", "#f1e6a8", "#e4dcf2", "#f8f5ee"];
+      const roofs = ["#b4443a", "#8b5e3c", "#5b6b7a", "#c8642c", "#3f6e5a", "#6b4f9e"];
+      const glass = { rows: 1, color: "#cfe8ff", spacing: 20, width: 0.4, height: 0.4, bottom: 0.35 };
+      if (level === 1) {
+        // Cottage: pitched roof, chimney, a door, a picket fence and a bush.
+        const x0 = -hw * 0.42, x1 = hw * 0.32, y0 = -hd * 0.62, y1 = hd * 0.02;
+        const wall = m.pick(walls), roof = m.pick(roofs, 3);
+        m.box(x0, y0, x1, y1, 0, 26, wall, null, { windows: [glass] });
+        m.panel(-5, 5, y1, 0, 16, "#7a4b2a");
+        m.gable(x0 - 4, y0 - 4, x1 + 4, y1 + 5, 26, 50, roof, wall);
+        m.box(x1 - 14, y0 + 6, x1 - 6, y0 + 14, 30, 56, "#9a4a32", "#5b2a1d");
+        for (const side of [-1, 1]) m.line(side * 9, hd * 0.86, 7, side * hw * 0.92, hd * 0.86, 7, "#f8fafc", 2.5);
+        for (let k = 0; k < 7; k++) {
+          const x = (k % 2 ? 1 : -1) * lerp(9, hw * 0.92, (k >> 1) / 3);
+          m.line(x, hd * 0.86, 0, x, hd * 0.86, 10, "#f8fafc", 2);
+        }
+        m.bush(hw * 0.65, -hd * 0.35, 13, 20);
+      } else if (level === 2) {
+        // A row of narrow two-storey townhouses, each its own color.
+        const n = hw > 64 ? 3 : 2, y0 = -hd * 0.72, y1 = hd * 0.18;
+        for (let i = 0; i < n; i++) {
+          const x0 = lerp(-hw * 0.9, hw * 0.9, i / n), x1 = lerp(-hw * 0.9, hw * 0.9, (i + 1) / n), xm = (x0 + x1) / 2;
+          const wall = walls[(m.variant + i * 3) % walls.length];
+          m.box(x0, y0, x1, y1, 0, 52, wall, null, { windows: [{ ...glass, rows: 2, spacing: 16 }] });
+          m.panel(xm - 5, xm + 5, y1, 0, 17, ["#7a4b2a", "#1f4e79", "#2f5d3a"][(m.variant + i) % 3]);
+          m.box(xm - 8, y1, xm + 8, y1 + 6, 0, 4, "#d1d5db", "#e5e7eb");
+          m.gable(x0 - 1, y0 - 3, x1 + 1, y1 + 4, 52, 72, m.pick(roofs, 3 + i * 2), wall);
+        }
+        for (const [a, b] of [[-hw * 0.9, -hw * 0.3], [hw * 0.3, hw * 0.9]]) m.box(a, hd * 0.78, b, hd * 0.9, 0, 9, "#3f7f3a", "#56a04b", { stroke: null });
+      } else {
+        // Apartment block: flat roof, rows of balconies, a water tank on top.
+        const x0 = -hw * 0.88, x1 = hw * 0.88, y0 = -hd * 0.85, y1 = hd * 0.25, H = 118;
+        const wall = m.pick(["#e8dccb", "#d6c3a5", "#c9d6df", "#e3c9c0", "#d7dfd0"]);
+        m.box(x0, y0, x1, y1, 0, H, wall, "#9ca3af", {
+          windows: [
+            { rows: 6, color: "#cfe8ff", spacing: 18, width: 0.45, height: 0.45, bottom: 0.3 },
+            { rows: 6, color: "#f8fafc", spacing: 18, width: 0.75, height: 0.07, bottom: 0.18, only: "front" },
+          ],
+        });
+        m.box(x0, y0, x1, y1, H, H + 4, shadeColor(wall, 0.85), "#9ca3af");
+        m.custom(-hw * 0.1, -hd * 0.1, H + 4, () => {
+          for (let r = 0; r < 3; r++) {
+            const y = lerp(-hd * 0.7, hd * 0.05, r / 3);
+            m.flat(rectPoints(-hw * 0.2, y, hw * 0.3, y + hd * 0.18), H + 5, "#1e3a8a", "#93c5fd", 1);
+          }
+        });
+        m.box(-14, y1, 14, y1 + 12, 18, 21, m.pick(roofs, 3), m.pick(roofs, 3));
+        m.panel(-8, 8, y1, 0, 17, "#334155");
+        m.cyl(hw * 0.5, -hd * 0.5, 10, H + 4, H + 22, "#8b5e3c", null, { n: 10 });
+        m.cone(hw * 0.5, -hd * 0.5, 11, H + 22, H + 30, ["#6b4a2e"], { n: 10 });
+        m.box(-hw * 0.5, -hd * 0.5, -hw * 0.3, -hd * 0.3, H + 4, H + 12, "#cbd5e1", "#e5e7eb");
+        m.bush(-hw * 0.7, hd * 0.65, 11, 18);
+        m.bush(hw * 0.7, hd * 0.65, 11, 18);
+      }
+    },
+  },
+
+  // ---- shops (level 1–3): corner shop, supermarket, office tower -----------
+  shop: {
+    floor: "#cfc8b8",
+    ground(m) {
+      const { hw, hd, level } = m;
+      if (level === 2) {
+        m.flat(rectPoints(-hw * 0.98, hd * 0.25, hw * 0.98, hd * 0.98), 0, "#7d7d7d");
+        for (let k = 0; k <= 5; k++) {
+          const x = lerp(-hw * 0.85, hw * 0.85, k / 5);
+          m.strokeLine(m.at(x, hd * 0.45), m.at(x, hd * 0.95), "#f8fafc", 2);
+        }
+      } else if (level === 3) {
+        for (let k = 1; k < 4; k++) m.strokeLine(m.at(-hw * 0.95, hd * (0.2 + k * 0.18)), m.at(hw * 0.95, hd * (0.2 + k * 0.18)), "#bfb8a8", 2);
+      }
+    },
+    build(m, t) {
+      const { hw, hd, level } = m;
+      const accents = ["#e63946", "#2a9d8f", "#f4a261", "#457b9d", "#9b5de5", "#e9a23b", "#d6336c"];
+      const accent = m.pick(accents);
+      if (level === 1) {
+        // Corner shop: striped awning, big window, a sign on top, produce out front.
+        const x0 = -hw * 0.75, x1 = hw * 0.75, y0 = -hd * 0.7, y1 = hd * 0.12;
+        const wall = m.pick(["#f4f1ea", "#e9d8c4", "#d9e4ea", "#f1e3c8"], 4);
+        m.box(x0, y0, x1, y1, 0, 34, wall, "#a8a29e", { windows: [{ rows: 1, color: "#cfe8ff", spacing: 22, width: 0.4, height: 0.35, bottom: 0.45 }] });
+        m.panel(x0 + 8, hw * 0.2, y1, 3, 20, "#bfe3ff");
+        m.panel(hw * 0.3, hw * 0.52, y1, 0, 22, "#5b3a22");
+        m.awning(x0 - 2, x1 + 2, y1, 28, 16, [accent, "#f8fafc"]);
+        m.box(-hw * 0.5, y1 - 6, hw * 0.5, y1, 34, 46, accent, shadeColor(accent, 0.8));
+        m.box(-hw * 0.55, y0 + 8, -hw * 0.3, y0 + 22, 34, 42, "#cbd5e1", "#e5e7eb");
+        m.cyl(hw * 0.4, y0 + 16, 4, 34, 44, "#9ca3af", "#6b7280", { n: 8 });
+        for (let k = 0; k < 3; k++) {
+          const x = x0 + 10 + k * 13;
+          m.box(x, hd * 0.45, x + 10, hd * 0.6, 0, 6, "#a47148", ["#ef4444", "#facc15", "#22c55e"][k]);
+        }
+      } else if (level === 2) {
+        // Supermarket: wide glass front, colored band, rooftop sign, parked cars.
+        const x0 = -hw * 0.92, x1 = hw * 0.92, y0 = -hd * 0.9, y1 = hd * 0.12;
+        m.box(x0, y0, x1, y1, 0, 46, "#f1ede4", "#b0aaa0");
+        m.panel(x0 + 8, x1 - 8, y1, 3, 26, "#9fd3f5");
+        m.panel(-9, 9, y1, 0, 24, "#3b5b78");
+        m.panel(x0, x1, y1, 31, 40, accent);
+        for (const sx of [-1, 1]) m.line(sx * hw * 0.35, -hd * 0.2, 46, sx * hw * 0.35, -hd * 0.2, 62, "#64748b", 2);
+        m.box(-hw * 0.48, -hd * 0.24, hw * 0.48, -hd * 0.16, 60, 80, accent, shadeColor(accent, 0.8), {
+          windows: [{ rows: 1, color: "#fff7d6", spacing: 14, width: 0.55, height: 0.35, bottom: 0.32 }],
+        });
+        m.box(-hw * 0.75, -hd * 0.7, -hw * 0.55, -hd * 0.5, 46, 54, "#cbd5e1", "#e5e7eb");
+        m.custom(0, -hd * 0.5, 46, () => {
+          for (let k = 0; k < 4; k++) {
+            const x = lerp(-hw * 0.4, hw * 0.75, k / 4);
+            m.flat(rectPoints(x, -hd * 0.8, x + hw * 0.16, -hd * 0.35), 46.5, "#bfe3ff", "#94a3b8", 1);
+          }
+        });
+        const cars = ["#ef4444", "#3b82f6", "#f8fafc", "#facc15", "#22c55e", "#1f2937"];
+        for (let k = 0; k < 2; k++) {
+          const x = lerp(-hw * 0.85, hw * 0.85, ((m.variant >>> (k * 3)) % 5 + 0.5) / 5);
+          if (k && Math.abs(x - lerp(-hw * 0.85, hw * 0.85, ((m.variant % 5) + 0.5) / 5)) < 1) continue;
+          const c = cars[(m.variant >>> (k * 4 + 2)) % cars.length];
+          m.box(x - 7, hd * 0.52, x + 7, hd * 0.86, 0, 9, c, shadeColor(c, 0.85));
+          m.box(x - 6, hd * 0.6, x + 6, hd * 0.76, 9, 14, "#cfe8ff", shadeColor(c, 0.9));
+        }
+      } else {
+        // Office tower: glass podium, a tall glass tower and a blinking antenna.
+        const H = 196;
+        m.box(-hw * 0.92, -hd * 0.92, hw * 0.92, hd * 0.18, 0, 28, "#cbd5e1", "#94a3b8", {
+          windows: [{ rows: 1, color: "#9fd3f5", spacing: 16, width: 0.75, height: 0.6, bottom: 0.15 }],
+        });
+        m.box(-12, hd * 0.18, 12, hd * 0.32, 20, 23, accent, accent);
+        const tw = m.pick([["#5b7f9e", "#cfe6fb"], ["#3f5f7a", "#a8d3f0"], ["#6b7a8f", "#dbeafe"], ["#2f4858", "#9fd3c7"]], 2);
+        m.box(-hw * 0.55, -hd * 0.78, hw * 0.55, hd * 0.02, 28, H, tw[0], "#64748b", {
+          windows: [{ rows: 10, color: tw[1], spacing: 12, width: 0.7, height: 0.62, bottom: 0.2 }],
+        });
+        m.box(-hw * 0.38, -hd * 0.6, hw * 0.38, -hd * 0.16, H, H + 14, "#475569", "#334155");
+        m.panel(-hw * 0.3, hw * 0.3, hd * 0.02, H - 16, H - 6, accent);
+        m.line(0, -hd * 0.38, H + 14, 0, -hd * 0.38, H + 54, "#9ca3af", 2.5);
+        m.dot(0, -hd * 0.38, H + 56, 4, blink(t, 0.6, m.id * 0.17) ? "#ef4444" : "#7f1d1d");
+        m.bush(-hw * 0.75, hd * 0.6, 10, 16);
+        m.bush(hw * 0.75, hd * 0.6, 10, 16);
+      }
     },
   },
 

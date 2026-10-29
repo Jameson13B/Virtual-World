@@ -65,7 +65,7 @@ js/game/layout.js            deterministic road growth + building lots
 js/game/city.js              economy, tiers, specials, save/share codes
 js/game/rewards.js           scan classification and rewards
 js/game/render.js            map rendering (lots, construction, forest, bubbles)
-js/game/models.js            3D models for special buildings and factories (some animated)
+js/game/models.js            3D models for every building: homes, shops, factories, specials
 js/game/scanner.js           camera scanning (BarcodeDetector or jsQR) + photo fallback
 js/game/touch.js             pan / pinch / tap
 js/game/online.js            Supabase: accounts, leaderboard, friends, cloud save

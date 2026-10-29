@@ -6,6 +6,13 @@
 
 const CHANGELOG = [
   {
+    version: "0.9.1",
+    notes: [
+      "🏡 New homes: a cottage with a picket fence grows into a row of townhouses, then an apartment block with solar panels",
+      "🏪 New shops: a corner shop with a striped awning becomes a supermarket with its own parking lot, then a glass office tower",
+    ],
+  },
+  {
     version: "0.9.0",
     notes: [
       "🛣️ You choose where roads go! When you have enough 🧱, pick one of 2 ghost roads on the map – each shows how many new lots it opens",
