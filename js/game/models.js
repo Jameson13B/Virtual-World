@@ -474,16 +474,58 @@ const LOT_MODELS = {
         ],
       });
       m.box(-hw * 0.92, -hd * 0.92, hw * 0.4, hd * 0.24, 48, 52, "#f3f4f6", "#991b1b");
-      m.box(hw * 0.46, -hd * 0.85, hw * 0.86, -hd * 0.3, 0, 108, "#991b1b", "#450a0a", { windows: [{ rows: 4, color: "#fde68a", spacing: 14 }] });
-      m.pyramid(hw * 0.44, -hd * 0.87, hw * 0.88, -hd * 0.28, 108, 124, "#1f2937");
+      const tower = m.level >= 3 ? 140 : 108;
+      m.box(hw * 0.46, -hd * 0.85, hw * 0.86, -hd * 0.3, 0, tower, "#991b1b", "#450a0a", { windows: [{ rows: tower > 108 ? 5 : 4, color: "#fde68a", spacing: 14 }] });
+      m.pyramid(hw * 0.44, -hd * 0.87, hw * 0.88, -hd * 0.28, tower, tower + 16, "#1f2937");
       m.dot(-hw * 0.65, 0, 54, 4, blink(t, 1.5) ? "#ef4444" : "#fef2f2");
       m.dot(-hw * 0.1, 0, 54, 4, blink(t, 1.5) ? "#fef2f2" : "#ef4444");
-      // fire truck on the apron
-      const tx = -hw * 0.55;
-      m.box(tx, hd * 0.3, tx + 20, hd * 0.9, 0, 17, "#dc2626", "#ef4444");
-      m.line(tx + 10, hd * 0.34, 18, tx + 10, hd * 0.86, 18, "#e5e7eb", 3);
-      m.dot(tx + 5, hd * 0.86, 19, 2.5, blink(t, 2.2) ? "#ef4444" : "#3b82f6");
-      m.dot(tx + 15, hd * 0.86, 19, 2.5, blink(t, 2.2) ? "#3b82f6" : "#ef4444");
+      // a fire truck on the apron for each level
+      for (let k = 0; k < Math.max(1, m.level); k++) {
+        const tx = -hw * 0.8 + k * 30;
+        m.box(tx, hd * 0.3, tx + 20, hd * 0.9, 0, 17, "#dc2626", "#ef4444");
+        m.line(tx + 10, hd * 0.34, 18, tx + 10, hd * 0.86, 18, "#e5e7eb", 3);
+        m.dot(tx + 5, hd * 0.86, 19, 2.5, blink(t, 2.2, k * 0.2) ? "#ef4444" : "#3b82f6");
+        m.dot(tx + 15, hd * 0.86, 19, 2.5, blink(t, 2.2, k * 0.2) ? "#3b82f6" : "#ef4444");
+      }
+    },
+  },
+
+  // Navy and white, with a radio mast, a flag and a police car per level.
+  police: {
+    floor: "#9ca3af",
+    ground(m) {
+      const { hw, hd } = m;
+      m.flat(rectPoints(-hw * 0.95, hd * 0.3, hw * 0.95, hd * 0.95), 0, "#6b7280");
+      for (let k = 0; k < 4; k++) m.strokeLine(m.at(-hw * 0.85 + k * 34, hd * 0.35), m.at(-hw * 0.85 + k * 34, hd * 0.9), "#f8fafc", 2);
+    },
+    build(m, t) {
+      const { hw, hd, level } = m;
+      const h = 44 + level * 10;
+      m.box(-hw * 0.9, -hd * 0.9, hw * 0.55, hd * 0.2, 0, h, "#e5e7eb", "#cbd5e1", {
+        windows: [
+          { rows: 1, color: "#1e3a8a", spacing: 40, width: 0.35, height: 0.55, bottom: 0, only: "front" },
+          { rows: 1 + level, color: "#93c5fd", spacing: 16, width: 0.55, height: 0.45, bottom: 0.4 },
+        ],
+      });
+      m.box(-hw * 0.92, -hd * 0.92, hw * 0.57, hd * 0.22, h, h + 5, "#1e3a8a", "#1e40af");
+      m.box(-hw * 0.4, hd * 0.2, -hw * 0.05, hd * 0.32, h * 0.45, h * 0.5, "#1e3a8a", "#1e3a8a"); // porch roof
+      m.panel(-hw * 0.32, -hw * 0.13, hd * 0.2, 0, h * 0.42, "#1e40af");
+      // sign + lamp over the door
+      m.dot(-hw * 0.22, hd * 0.26, h * 0.62, 5, blink(t, 1) ? "#3b82f6" : "#bfdbfe");
+      // radio mast and blinking light
+      m.line(hw * 0.3, -hd * 0.6, h + 5, hw * 0.3, -hd * 0.6, h + 55, "#475569", 2.5);
+      m.dot(hw * 0.3, -hd * 0.6, h + 57, 3, blink(t, 0.7) ? "#ef4444" : "#7f1d1d");
+      const fx = hw * 0.75, fy = hd * 0.1;
+      m.line(fx, fy, 0, fx, fy, 70, "#d1d5db", 2);
+      m.custom(fx, fy, 70, () => m.flag(fx, fy, 70, t, "#2563eb"));
+      // a police car per level
+      for (let k = 0; k < Math.max(1, level); k++) {
+        const cx = -hw * 0.82 + k * 34;
+        m.box(cx, hd * 0.42, cx + 15, hd * 0.85, 0, 10, "#f8fafc", "#f8fafc");
+        m.box(cx + 1, hd * 0.55, cx + 14, hd * 0.72, 10, 15, "#111827", "#111827");
+        m.dot(cx + 4, hd * 0.63, 16, 2.2, blink(t, 2.5, k * 0.3) ? "#ef4444" : "#3b82f6");
+        m.dot(cx + 11, hd * 0.63, 16, 2.2, blink(t, 2.5, k * 0.3) ? "#3b82f6" : "#ef4444");
+      }
     },
   },
 

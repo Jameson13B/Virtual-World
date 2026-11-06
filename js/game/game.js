@@ -6,7 +6,7 @@
 const $ = (sel) => document.querySelector(sel);
 const SAVE_KEY = "vw.city";
 const PREFS_KEY = "vw.gamePrefs";
-const VERSION = "0.9.1";
+const VERSION = "0.11.0";
 
 const canvas = $("#cityCanvas");
 const ctx = canvas.getContext("2d");
@@ -21,7 +21,7 @@ let city = null;
 let renderer = null;
 let visit = null; // { city, renderer } while looking at someone else's town
 const online = new Online(window.VW_CONFIG);
-const ui = { placing: null, roadPick: null, focus: null, selected: null, floaters: [], cars: [], drive: null, follow: null, collector: null };
+const ui = { placing: null, placeStation: null, roadPick: null, focus: null, selected: null, floaters: [], cars: [], drive: null, follow: null, collector: null, responders: [] };
 
 function readJSON(key, fallback = null) {
   try {
@@ -201,6 +201,13 @@ function updateTopbar() {
   const chip = $("#collectorChip");
   chip.hidden = !ui.collector || !!visit;
   if (ui.collector) chip.querySelector("b").textContent = ui.collector.total - ui.collector.pool.size + "/" + ui.collector.total;
+  const safe = $("#safetyChip");
+  safe.hidden = c.tierReached < SAFETY_TIER;
+  if (!safe.hidden) {
+    const sc = visit ? null : city.safety();
+    safe.querySelector("b").textContent = visit ? "–" : Math.round(sc.score * 100) + "%";
+    safe.classList.toggle("alert", !visit && (city.unpaid || city.incidents.length > 0));
+  }
   $("#dailyBtn .dot").hidden = !city.dailyStatus().available;
   $("#itemsBtn .dot").hidden = !city.inventory.length;
 }
@@ -223,6 +230,7 @@ $("#compassBtn").addEventListener("click", () => {
   ui.unrotate = true;
 });
 $("#appealChip").addEventListener("click", openAppeal);
+$("#safetyChip").addEventListener("click", () => visit || openSafety());
 
 // Every tier, with progress toward the next one.
 function openMilestones() {
@@ -263,6 +271,7 @@ function openAppeal() {
     "<p>Appeal speeds up everything: empty lots develop faster, people move in faster, and shops earn more coins.</p>" +
     "<div class='card'><h3>Where it comes from</h3><div class='list'>" +
     "<div class='row'><span class='grow'>🏕️ Every town</span><b>1.00</b></div>" +
+    (c.tierReached >= SAFETY_TIER ? "<div class='row'><span class='grow'>🛡️ Fire &amp; police coverage</span><b>" + (c.safetyAppeal() >= 0 ? "+" : "") + Math.round(c.safetyAppeal() * 100) + "%</b></div>" : "") +
     ids.map((id) => {
       const sp = SPECIALS[id];
       return "<div class='row'><span class='grow'>" + sp.icon + " " + sp.name + (placed[id] > 1 ? " ×" + placed[id] : "") + "</span><b>" + pct(sp.appeal * placed[id]) + "</b></div>";
@@ -307,9 +316,28 @@ function handleEvents(events) {
         button: "Hooray!",
       });
       saveGame();
+    } else if (e.type === "safetyUnlocked") {
+      showSafetyIntro();
+    } else if (e.type === "incident") {
+      const inc = e.inc, svc = SERVICES[inc.type];
+      const what = inc.type === "fire" ? "🔥 Fire at a " + buildingName(inc.lot).slice(3) : "🦹 Robbery at a " + buildingName(inc.lot).slice(3);
+      toast(city.stationFor(inc.lot, inc.type) ? what + " – " + svc.vehicle + " on the way!" : what + "! No " + svc.name.toLowerCase() + " covers it – tap it to call a crew", 3500);
+      buzz([40, 60, 40]);
+    } else if (e.type === "burned") {
+      floater(e.inc.lot.center, e.lost ? "🔥 Burned down" : "🔥 Lost a level", "#fca5a5");
+      toast(e.lost ? "🔥 A building burned down. Fire stations stop this!" : "🔥 A building burned and lost a level", 3500);
+      saveGame();
+    } else if (e.type === "robbed") {
+      floater(e.inc.lot.center, "🦹 −" + e.stolen + " 💰", "#fca5a5");
+    } else if (e.type === "resolved") {
+      floater(e.inc.lot.center, e.inc.type === "fire" ? "✅ Fire's out!" : "✅ Robbers caught!", "#bbf7d0");
+    } else if (e.type === "unpaid") {
+      toast("⚠️ Out of 💰 for station upkeep – fire & police stopped responding", 4000);
+    } else if (e.type === "paid") {
+      toast("✅ Upkeep paid – fire & police are back on duty");
     } else if (e.type === "built" && !visit) {
       const b = e.lot;
-      const label = KIND_ICONS[b.kind] || SPECIALS[b.special]?.icon || "✨";
+      const label = KIND_ICONS[b.kind] || SERVICES[b.special]?.icon || SPECIALS[b.special]?.icon || "✨";
       floater(b.center, label + " built!", "#bbf7d0");
     }
   }
@@ -323,7 +351,10 @@ function onTap(world) {
   const vp = viewport.getViewPoint();
   const z = viewport.zoom;
 
-  if (!visit && !ui.placing) {
+  if (!visit && !ui.placing && !ui.placeStation) {
+    for (const inc of city.incidents) {
+      if (distance(renderer.incidentAnchor(inc.lot, vp), world) < 36 * Math.max(1, z * 0.75)) return openLotSheet(inc.lot, false);
+    }
     for (const lot of city.lots) {
       if (!city.bagReady(lot)) continue;
       if (distance(renderer.bubbleAnchor(lot, vp), world) < 34 * Math.max(1, z * 0.75)) return collect(lot);
@@ -336,9 +367,14 @@ function onTap(world) {
   }
 
   const lot = active.city.lots.find((l) => l.poly.containsPoint(world));
+  if (ui.placeStation) {
+    if (!lot) return toast("Tap an empty lot, or a building to replace");
+    if (lot.kind === "special" || lot.kind === "svc") return toast("Pick a lot without a special building or station");
+    return confirmStation(lot);
+  }
   if (ui.placing) {
     if (!lot) return toast("Tap an empty lot, or a building to replace");
-    if (lot.kind === "special") return toast("That lot already has a special building");
+    if (lot.kind === "special" || lot.kind === "svc") return toast("That lot already has a special building");
     return lot.kind ? confirmReplace(lot) : placeSpecial(lot);
   }
   if (!lot) {
@@ -362,7 +398,7 @@ function placeSpecial(lot) {
   const stored = lot.kind === "com" || lot.kind === "ind" ? Math.floor(lot.coins) : 0;
   const unit = lot.kind === "ind" ? " 🧱" : " 💰";
   if (!city.placeSpecial(lot, id)) return;
-  floater(lot.center, SPECIALS[id].icon + " placed!", "#fde68a");
+  floater(lot.center, SPECIALS[id].icon + (SPECIALS[id].station ? " level-2 station!" : " placed!"), "#fde68a");
   if (stored > 0) toast("Collected +" + stored + unit + " first");
   buzz(40);
   stopPlacing();
@@ -405,6 +441,7 @@ function openLotSheet(lot, readOnly) {
   ui.selected = lot;
   const c = readOnly ? visit.city : city;
   let title, html;
+  if (lot.kind === "svc") return openStationSheet(lot, readOnly);
   if (lot.building > 0 && !readOnly) {
     title = "🏗️ Under construction";
     html = "<p>Builders are hard at work. Ready in about " + Math.ceil(lot.building) + " seconds.</p>";
@@ -447,7 +484,17 @@ function openLotSheet(lot, readOnly) {
       }
     }
   }
+  if (!readOnly && lot.incident) html = incidentCard(lot.incident) + html;
   openSheet(title, html, (body) => {
+    const crew = body.querySelector("#crewBtn");
+    if (crew) crew.addEventListener("click", () => {
+      const e = city.callCrew(lot.incident);
+      if (!e) return toast(lot.incident ? "Not enough coins" : "It's already been handled");
+      handleEvents([e]);
+      buzz(40);
+      saveGame();
+      closeSheet();
+    });
     const back = body.querySelector("#returnBtn");
     if (back) {
       back.addEventListener("click", () => {
@@ -638,7 +685,7 @@ $("#itemsBtn").addEventListener("click", () => {
     ? "<div class='list'>" + ids.map((id) => {
         const s = SPECIALS[id], r = RARITY_INFO[s.rarity];
         return "<div class='item-row'><span class='emoji'>" + s.icon + "</span><div class='grow'><b>" + s.name + (counts[id] > 1 ? " ×" + counts[id] : "") + "</b>" +
-          "<small><span class='rarity' style='color:" + r.color + "'>" + r.label + "</span> · +" + Math.round(s.appeal * 100) + "% ✨</small></div>" +
+          "<small><span class='rarity' style='color:" + r.color + "'>" + r.label + "</span> · " + (s.station ? "a free level-2 " + SERVICES[s.station].name.toLowerCase() : "+" + Math.round(s.appeal * 100) + "% ✨") + "</small></div>" +
           "<button data-place='" + id + "' class='primary' " + (spots ? "" : "disabled") + ">Place</button></div>";
       }).join("") + "</div>" + (spots ? "" : "<p class='muted'>Every lot already has a special building – wait for a new road.</p>")
     : "<p>No special buildings yet.</p><p class='muted'>Scanning codes sometimes drops parks, schools, towers and more. Rarer codes, rarer drops! 🍀</p>";
@@ -713,6 +760,7 @@ function startPlacing(id) {
 }
 function stopPlacing() {
   ui.placing = null;
+  ui.placeStation = null;
   $("#placeBanner").hidden = true;
 }
 $("#placeCancel").addEventListener("click", stopPlacing);
@@ -974,6 +1022,7 @@ function startVisit(code) {
     const other = City.fromShareCode(decodeURIComponent(code));
     visit = { city: other, renderer: new CityRenderer(other) };
     ui.cars = [];
+    closeSheet();
     stopPlacing();
     $("#visitName").textContent = other.name;
     $("#visitBanner").hidden = false;
@@ -1263,6 +1312,193 @@ function updateCollector() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Fire & police
+// ---------------------------------------------------------------------------
+const perHour = (rate) => fmt(Math.round(rate * 3600));
+const mmss = (sec) => Math.floor(sec / 60) + ":" + String(Math.floor(sec % 60)).padStart(2, "0");
+
+function showSafetyIntro() {
+  if (prefs.safetyIntro) return;
+  prefs.safetyIntro = true;
+  savePrefs();
+  showModal({
+    icon: "🚒",
+    title: "Fire & police unlocked!",
+    body: "<p>Your town is big enough for emergencies: 🔥 fires and 🦹 robberies, only while you're playing.</p>" +
+      "<p style='text-align:left'>🚒 <b>Fire stations</b> stop buildings burning down.<br>🚓 <b>Police stations</b> stop robbers taking a shop's 💰.<br>" +
+      "🛡️ Good coverage raises ✨ appeal. Stations cost upkeep while they run.</p>" +
+      "<p class='muted'>Tap 🛡️ at the top to build your first station.</p>",
+    button: "Let's build one",
+    onClose: openSafety,
+  });
+}
+
+function incidentCard(inc) {
+  const svc = SERVICES[inc.type];
+  const fire = inc.type === "fire";
+  const status = inc.working > 0
+    ? svc.icon + " The " + svc.vehicle + " is on scene – almost done."
+    : inc.responder
+      ? svc.icon + " A " + svc.vehicle + " is on the way."
+      : city.stationFor(inc.lot, inc.type)
+        ? svc.icon + " Dispatching a " + svc.vehicle + "…"
+        : "No " + svc.name.toLowerCase() + " covers this building" + (city.unpaid ? " that can respond (upkeep unpaid)" : "") + ".";
+  return "<div class='card incident'><h3>" + (fire ? "🔥 On fire!" : "🦹 Being robbed!") + "</h3>" +
+    "<p>" + (fire ? (inc.lot.level <= 1 ? "It burns down" : "It loses a level") : "The robbers get away with its 💰") + " in <b>" + mmss(Math.max(0, inc.limit - inc.t)) + "</b>.</p>" +
+    "<p class='muted'>" + status + "</p>" +
+    (inc.working > 0 ? "" : "<button id='crewBtn' class='gold big'>" + (fire ? "🧯 Call a private fire crew" : "🕵️ Hire private security") + " · " + fmt(city.crewCost()) + " 💰</button>") +
+    "</div>";
+}
+
+function openSafety() {
+  if (city.tierReached < SAFETY_TIER) {
+    return openSheet("🛡️ Safety", "<p>Fire &amp; police unlock at " + TIERS[SAFETY_TIER].icon + " " + TIERS[SAFETY_TIER].name + " (" + TIERS[SAFETY_TIER].pop + " people).</p>");
+  }
+  const sf = city.safety(), need = city.stationsNeeded();
+  const income = city.incomeRate(), upkeep = city.upkeepRate();
+  const pct = (v) => Math.round(v * 100) + "%";
+  const kinds = SERVICE_IDS.map((k) => {
+    const svc = SERVICES[k], n = city.stations(k).length;
+    return "<div class='item-row'><span class='emoji'>" + svc.icon + "</span><div class='grow'><b>" + svc.name + "s · " + n + "</b>" +
+      "<small>Covers " + pct(sf[k]) + " of buildings · about " + need + " cover the whole town</small></div>" +
+      "<button data-build='" + k + "' class='gold'" + (city.coins < city.stationCost(k) ? " disabled" : "") + ">Build · " + fmt(city.stationCost(k)) + " 💰</button></div>";
+  }).join("");
+  const live = city.incidents.map((inc) =>
+    "<div class='item-row'><span class='emoji'>" + SERVICES[inc.type].incident + "</span><div class='grow'><b>" + buildingName(inc.lot) + "</b>" +
+    "<small>" + (inc.working > 0 || inc.responder ? SERVICES[inc.type].icon + " help is on the way" : mmss(Math.max(0, inc.limit - inc.t)) + " left · not covered") + "</small></div>" +
+    "<button class='small' data-goto='" + inc.lot.id + "'>👀</button></div>").join("");
+  const html =
+    "<div class='stat-grid'><div class='stat'><b>🛡️ " + pct(sf.score) + "</b><span>Safety</span></div>" +
+    "<div class='stat'><b>" + (city.safetyAppeal() >= 0 ? "+" : "") + pct(city.safetyAppeal()) + " ✨</b><span>Appeal from safety</span></div></div>" +
+    (city.unpaid ? "<div class='card incident'><h3>⚠️ Upkeep unpaid</h3><p>Your stations stopped responding. They're back once you have " + fmt(upkeep * 60) + " 💰.</p></div>" : "") +
+    (live ? "<div class='card'><h3>🚨 Happening now</h3><div class='list'>" + live + "</div></div>" : "") +
+    "<div class='list'>" + kinds + "</div>" +
+    "<div class='card'><h3>💸 Upkeep</h3><div class='row'><span class='grow'>All stations</span><b>" + perHour(upkeep) + " 💰/hour</b></div>" +
+    "<div class='row'><span class='grow'>Your income</span><b>" + perHour(income) + " 💰/hour</b></div>" +
+    "<p class='muted'>Covering the whole town with both kinds costs about " + Math.round(UPKEEP_SHARE * 100) + "% of your income (" + perHour(city.stationUpkeep()) + " 💰/hour per station). Upgrades add vehicles and speed, not range.</p></div>" +
+    "<p class='muted'>Emergencies only happen while you're playing.</p>";
+  ui.showCoverage = "fire";
+  openSheet("🛡️ Fire & police", html, (body) => {
+    body.querySelectorAll("[data-build]").forEach((b) => b.addEventListener("click", () => startStationPlacing(b.dataset.build)));
+    body.querySelectorAll("[data-goto]").forEach((b) => b.addEventListener("click", () => {
+      const lot = city.lots.find((l) => l.id === +b.dataset.goto);
+      closeSheet();
+      if (lot) ui.focus = { at: scale(lot.center, -1), zoom: Math.min(viewport.zoom, 1.4) };
+    }));
+  }, () => (ui.showCoverage = null));
+}
+
+function startStationPlacing(kind) {
+  closeSheet();
+  stopRoadPick();
+  ui.placing = null;
+  ui.placeStation = kind;
+  $("#placeText").textContent = "Tap a lot for your " + SERVICES[kind].icon + " station";
+  $("#placeBanner").hidden = false;
+  // Show the whole town, with red where nothing covers it yet.
+  const b = city.layout.bounds();
+  const zoom = clamp(Math.max((b.maxX - b.minX) / viewport.width, (b.maxY - b.minY) / viewport.height) * 1.2, viewport.minZoom, viewport.maxZoom);
+  ui.focus = { at: scale(city.center(), -1), zoom };
+}
+
+function confirmStation(lot) {
+  const kind = ui.placeStation, svc = SERVICES[kind], cost = city.stationCost(kind);
+  const reach = city.lots.filter((l) => (l.kind === "res" || l.kind === "com" || l.kind === "ind") && l !== lot && City.covers(lot, l));
+  const fresh = reach.filter((l) => !city.stations(kind).some((st) => City.covers(st, l))).length;
+  ui.selected = lot;
+  const html =
+    (lot.kind ? "<p>This tears down the <b>" + buildingName(lot) + "</b> (level " + Math.max(1, lot.effectiveLevel) + ") here." + (lot.level > 1 ? " Its upgrades aren't refunded." : "") + "</p>" : "") +
+    "<div class='stat-grid'><div class='stat'><b>" + reach.length + "</b><span>Buildings in reach</span></div>" +
+    "<div class='stat'><b>" + fresh + "</b><span>Not covered yet</span></div></div>" +
+    "<p class='muted'>Upkeep: about " + perHour(city.stationUpkeep()) + " 💰/hour.</p>" +
+    "<button id='stationBtn' class='gold big'" + (city.coins < cost ? " disabled" : "") + ">Build " + svc.icon + " " + svc.name + " · " + fmt(cost) + " 💰</button>" +
+    (city.coins < cost ? "<p class='muted' style='text-align:center'>Not enough coins</p>" : "") +
+    "<button id='stationNo' class='big' style='margin-top:8px'>Pick another spot</button>";
+  // Closing this sheet keeps placing mode on, so another lot can be tried.
+  openSheet(svc.icon + " Build here?", html, (body) => {
+    body.querySelector("#stationBtn").addEventListener("click", () => {
+      if (!city.buildStation(lot, kind)) return toast("Not enough coins");
+      floater(lot.center, svc.icon + " Station coming!", "#fde68a");
+      buzz(40);
+      stopPlacing();
+      saveGame();
+      closeSheet();
+    });
+    body.querySelector("#stationNo").addEventListener("click", closeSheet);
+  });
+}
+
+function openStationSheet(lot, readOnly) {
+  const c = readOnly ? visit.city : city;
+  const svc = SERVICES[lot.special], lvl = Math.max(1, lot.effectiveLevel), r = City.response(lvl);
+  const reach = c.lots.filter((l) => (l.kind === "res" || l.kind === "com" || l.kind === "ind") && City.covers(lot, l)).length;
+  let html = "<p>" + svc.about + "</p>" +
+    "<div class='stat-grid'><div class='stat'><b>" + reach + "</b><span>Buildings covered</span></div>" +
+    "<div class='stat'><b>" + r.vehicles + "</b><span>" + svc.vehicle + (r.vehicles > 1 ? "s" : "") + "</span></div>" +
+    "<div class='stat'><b>" + r.dispatch + "s</b><span>To roll out</span></div>" +
+    "<div class='stat'><b>" + (readOnly ? "–" : perHour(city.stationUpkeep())) + "</b><span>💰/hour upkeep</span></div></div>";
+  if (!readOnly) {
+    if (lot.building > 0) html += "<p class='muted'>🏗️ Opening in " + Math.ceil(lot.building) + " seconds.</p>";
+    if (city.unpaid) html += "<p class='muted'>⚠️ Upkeep unpaid – not responding.</p>";
+    const up = city.stationUpgradeInfo(lot);
+    if (up) {
+      const next = City.response(lot.level + 1);
+      html += "<button id='upgradeBtn' class='gold big'" + (up.ok ? "" : " disabled") + ">⬆️ Level " + (lot.level + 1) + ": " + next.vehicles + " " + svc.vehicle + "s, faster · " + fmt(up.cost) + " 💰</button>" +
+        (city.coins < up.cost ? "<p class='muted' style='text-align:center'>Not enough coins</p>" : "");
+    } else html += "<p class='muted'>Fully upgraded! 🌟</p>";
+    html += "<button id='closeStation' class='ghost big' style='margin-top:8px;color:#fca5a5'>Close this station</button>";
+  }
+  openSheet(svc.icon + " " + svc.name + " · level " + lvl, html, (body) => {
+    const up = body.querySelector("#upgradeBtn");
+    if (up) up.addEventListener("click", () => {
+      if (!city.upgradeStation(lot)) return;
+      floater(lot.center, "⬆️ Upgrading!", "#fde68a");
+      buzz(40);
+      saveGame();
+      closeSheet();
+    });
+    const shut = body.querySelector("#closeStation");
+    if (shut) shut.addEventListener("click", () => {
+      if (!confirm("Close this " + svc.name.toLowerCase() + "? You won't get your coins back.")) return;
+      city.closeStation(lot);
+      saveGame();
+      closeSheet();
+    });
+  });
+}
+
+// Sends vehicles from covering stations to emergencies, and drives them back.
+function updateResponders(dt) {
+  if (ui.responders.length && ui.responders[0].city !== city) ui.responders = [];
+  for (const inc of city.incidents) {
+    if (inc.responder || inc.working > 0) continue;
+    const station = city.stationFor(inc.lot, inc.type);
+    if (!station) {
+      inc.wait = 0;
+      continue;
+    }
+    const r = City.response(station.level);
+    if (ui.responders.filter((v) => v.station === station).length >= r.vehicles) continue;
+    if ((inc.wait = (inc.wait || 0) + dt) < r.dispatch) continue;
+    const v = new Responder(city.layout.graph, inc.type, station, inc, r.speed);
+    v.city = city;
+    inc.responder = v;
+    ui.responders.push(v);
+  }
+  const everyone = [...ui.cars, ...ui.responders, ...(ui.collector ? ui.collector.trucks : [])];
+  for (const v of ui.responders) {
+    if (v.station.kind !== "svc") v.state = "done"; // its station closed
+    else if ((v.state === "out" || v.state === "working") && v.inc.lot.incident !== v.inc) v.state = "back"; // over without us
+    if (v.state === "arrived") {
+      v.state = "working";
+      v.inc.working = City.response(v.station.level).work;
+    }
+    v.update(everyone);
+  }
+  ui.responders = ui.responders.filter((v) => v.state !== "done");
+}
+
 // One car per 6 people, but no more than the roads can comfortably hold
 // (one per 250 units of road), and at most 60 so phones stay smooth.
 function roadLength(c) {
@@ -1285,6 +1521,7 @@ function updateTraffic(active) {
   const everyone = [...ui.cars];
   if (ui.drive) everyone.push(ui.drive);
   if (ui.collector && !visit) everyone.push(...ui.collector.trucks);
+  if (!visit) everyone.push(...ui.responders);
   for (const car of ui.cars) car.update(everyone);
   updateCollector();
 }
@@ -1335,7 +1572,17 @@ function loop(now) {
     if (Math.abs(viewport.angle) < 0.005) [viewport.angle, ui.unrotate] = [0, false];
   }
 
-  handleEvents(city.tick(dt));
+  // The town runs while you're here and for an hour after your last tap.
+  if (Date.now() - city.lastActive < ACTIVE_GRACE) {
+    handleEvents(city.tick(dt));
+    if (!visit) {
+      handleEvents(city.tickSafety(dt));
+      updateResponders(dt);
+    }
+  } else if (!ui.resting) {
+    ui.resting = true;
+    saveGame();
+  }
   const active = visit || { city, renderer };
   updateTraffic(active);
 
@@ -1356,10 +1603,11 @@ function loop(now) {
 
   viewport.reset("#3f8f3a");
   active.renderer.draw(ctx, viewport, {
-    placing: !!ui.placing,
+    placing: !!(ui.placing || ui.placeStation),
     roadPick: ui.roadPick ?? -1,
     selected: ui.selected,
-    cars: ui.collector && !visit ? [...ui.cars, ...ui.collector.trucks] : ui.cars,
+    cars: visit ? ui.cars : [...ui.cars, ...ui.responders, ...(ui.collector ? ui.collector.trucks : [])],
+    coverage: visit ? null : ui.placeStation || (ui.selected && ui.selected.kind === "svc" ? ui.selected.special : null) || ui.showCoverage,
     player: ui.drive,
     floaters: ui.floaters,
     now,
@@ -1385,12 +1633,28 @@ document.addEventListener("visibilitychange", () => {
 });
 window.addEventListener("pagehide", saveGame);
 
-// Progress made while the app was closed (up to 1 hour).
+// Any touch or key counts as being here. After an hour without one the town
+// rests, even with the app left open.
+function markActive() {
+  if (!city) return;
+  if (ui.resting) {
+    ui.resting = false;
+    toast("💤 Your town rested while you were away – it's busy again!");
+  }
+  city.lastActive = Date.now();
+}
+for (const ev of ["pointerdown", "keydown", "wheel"]) addEventListener(ev, markActive, { capture: true, passive: true });
+
+// Progress made while the app was closed: only up to an hour after your last tap.
 function catchUp() {
-  const away = (Date.now() - city.lastSeen) / 1000;
+  const now = Date.now();
+  const away = (now - city.lastSeen) / 1000;
+  const worked = Math.max(0, (Math.min(now, city.lastActive + ACTIVE_GRACE) - city.lastSeen) / 1000);
+  city.lastActive = now;
+  ui.resting = false;
   if (away < 60) return;
-  const s = city.simulate(Math.min(away, 3600));
-  city.lastSeen = Date.now();
+  const s = city.simulate(worked);
+  city.lastSeen = now;
   saveGame();
   const waiting = city.roadChoice ? "<p class='muted'>🛣️ A new road is ready – choose where it goes!</p>" : "";
   if (s.pop > 0 || s.roads > 0 || s.built > 0 || waiting) {
@@ -1399,10 +1663,12 @@ function catchUp() {
       icon: "🌙",
       title: "While you were away…",
       body: "It's been " + (hours >= 1 ? Math.floor(hours) + "h " : "") + Math.floor((away % 3600) / 60) + "m." +
+        (worked < away - 60 ? "<p class='muted'>Your town kept working for " + duration(worked * 1000) + " after your last tap, then rested.</p>" : "") +
         "<div class='gains'>" + (s.pop ? "<span class='gain'>+" + s.pop + " 👥</span>" : "") +
         (s.built ? "<span class='gain'>+" + s.built + " 🏠</span>" : "") +
         (s.roads ? "<span class='gain'>+" + s.roads + " 🛣️</span>" : "") +
-        (s.coins ? "<span class='gain'>+" + s.coins + " 💰</span>" : "") + "</div>" + waiting,
+        (s.coins ? "<span class='gain'>+" + fmt(s.coins) + " 💰</span>" : "") + "</div>" +
+        (s.upkeep ? "<p class='muted'>Station upkeep: " + fmt(s.upkeep) + " 💰 (included)</p>" : "") + waiting,
       button: "Welcome back!",
     });
   }
@@ -1430,6 +1696,7 @@ function catchUp() {
   } else {
     catchUp();
     if (prefs.seenVersion !== VERSION) showWhatsNew(prefs.seenVersion);
+    if (city.tierReached >= SAFETY_TIER) showSafetyIntro();
   }
   prefs.seenVersion = VERSION;
   savePrefs();

@@ -6,6 +6,17 @@
 
 const CHANGELOG = [
   {
+    version: "0.11.0",
+    notes: [
+      "🚒🚓 Fire & police! From Town on, 🔥 fires and 🦹 robberies break out while you play. Build stations (tap 🛡️ at the top) and their trucks and cars race to help",
+      "🔥 A fire nobody puts out costs the building a level, and a small one burns down. Robbers walk off with a shop's 💰",
+      "💸 Stations cost upkeep: covering your whole town takes about 20% of your income. Upgrades add vehicles and a faster response",
+      "🛡️ Good coverage raises ✨ appeal – from City on, poor coverage lowers it",
+      "🚒 A Fire Station from a scan is now a free level-2 fire station",
+      "💤 Your town only runs while you play, and for 1 hour after your last tap – even if the app is left open",
+    ],
+  },
+  {
     version: "0.9.1",
     notes: [
       "🏡 New homes: a cottage with a picket fence grows into a row of townhouses, then an apartment block with solar panels",

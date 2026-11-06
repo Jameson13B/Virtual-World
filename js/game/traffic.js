@@ -320,3 +320,87 @@ class CollectorTruck extends TownCar {
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// Fire trucks and police cars: drive from their station to an emergency, work
+// on scene, then drive back and park. `state` goes out → working → back → done.
+// ---------------------------------------------------------------------------
+const RESPONDER_REACH = 170; // close enough to the lot to start work
+
+class Responder extends TownCar {
+  constructor(graph, kind, station, inc, speed) {
+    super(graph);
+    this.kind = kind;
+    this.station = station;
+    this.inc = inc;
+    this.state = "out";
+    if (kind === "fire") [this.width, this.height, this.color] = [40, 80, "#dc2626"];
+    else [this.width, this.height, this.color] = [32, 54, "#f8fafc"];
+    this.maxSpeed = speed;
+    this.spawn(graph.segments[station.segIndex]);
+  }
+
+  get goal() {
+    return this.state === "back" ? this.station : this.inc.lot;
+  }
+
+  // Drive to the goal lot's road, then along it.
+  destination(from, to) {
+    if (!this.state) return null; // (not set yet while spawning)
+    const seg = this.graph.segments[this.goal.segIndex];
+    if (to === seg.p1) return seg.p2;
+    if (to === seg.p2) return seg.p1;
+    return distance(to, seg.p1) <= distance(to, seg.p2) ? seg.p1 : seg.p2;
+  }
+
+  // Twice per frame, like the collector: lights and sirens.
+  update(others) {
+    if (this.state === "working" || this.state === "done") return;
+    for (let k = 0; k < 2; k++) {
+      super.update(others);
+      if (distance(this, this.goal.center) > RESPONDER_REACH) continue;
+      this.state = this.state === "out" ? "arrived" : "done";
+      return;
+    }
+  }
+
+  draw(ctx) {
+    super.draw(ctx);
+    const t = performance.now() / 1000;
+    const on = Math.sin(t * Math.PI * 6) > 0;
+    const lit = this.state !== "back" && this.state !== "done";
+    ctx.save();
+    ctx.translate(this.x, this.y);
+    ctx.rotate(-this.angle);
+    const w = this.width, h = this.height;
+    if (this.kind === "fire") {
+      ctx.fillStyle = "#e5e7eb";
+      ctx.fillRect(-4, -h * 0.25, 8, h * 0.65); // ladder
+      ctx.fillStyle = "#9ca3af";
+      for (let y = -h * 0.2; y < h * 0.38; y += 9) ctx.fillRect(-6, y, 12, 2);
+    } else {
+      ctx.fillStyle = "#111827";
+      ctx.fillRect(-w / 2, -h * 0.12, w, h * 0.3); // black doors
+    }
+    // light bar across the cab
+    const y = -h / 2 + h * (this.kind === "fire" ? 0.08 : 0.45);
+    ctx.fillStyle = lit && on ? "#ef4444" : "#7f1d1d";
+    ctx.fillRect(-w / 2 + 3, y, w / 2 - 3, 6);
+    ctx.fillStyle = lit && !on ? "#3b82f6" : "#1e3a8a";
+    ctx.fillRect(0, y, w / 2 - 3, 6);
+    ctx.restore();
+    if (lit) {
+      const z = Math.max(1, (ctx.viewZoom || 1) * 0.8);
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, 50 * z, 0, Math.PI * 2);
+      ctx.fillStyle = on ? "rgba(239,68,68,0.18)" : "rgba(59,130,246,0.18)";
+      ctx.fill();
+      if ((ctx.viewZoom || 1) > 2) {
+        ctx.font = 34 * z + "px serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        uprightText(ctx, SERVICES[this.kind].icon, this.x, this.y);
+      }
+    }
+  }
+}

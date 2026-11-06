@@ -27,13 +27,29 @@ const SPECIALS = {
   carousel: { icon: "🎠", name: "Carousel", rarity: "uncommon", appeal: 0.12, about: "Painted horses going round and round under a striped roof." },
   school: { icon: "🏫", name: "School", rarity: "rare", appeal: 0.3, about: "Brick classrooms, a bell tower and a schoolyard full of noise." },
   clinic: { icon: "🏥", name: "Clinic", rarity: "rare", appeal: 0.3, about: "Doctors on call day and night, with a helipad on the roof." },
-  fire: { icon: "🚒", name: "Fire Station", rarity: "rare", appeal: 0.25, about: "The fire truck is washed, parked out front and ready to roll." },
+  fire: { icon: "🚒", name: "Fire Station", rarity: "rare", appeal: 0.25, station: "fire", about: "The fire truck is washed, parked out front and ready to roll." },
   library: { icon: "📚", name: "Library", rarity: "rare", appeal: 0.25, about: "Marble columns and a million quiet pages behind them." },
   tower: { icon: "🗼", name: "Sky Tower", rarity: "legendary", appeal: 0.6, about: "The tallest thing for miles, with a revolving restaurant at the top." },
   stadium: { icon: "🏟️", name: "Stadium", rarity: "legendary", appeal: 0.8, about: "Floodlights, a perfect pitch and a crowd that never stops doing the wave." },
   wheel: { icon: "🎡", name: "Ferris Wheel", rarity: "legendary", appeal: 0.6, about: "A glittering wheel with the best view of town from the top car." },
 };
 const SPECIAL_IDS = Object.keys(SPECIALS);
+
+// Fire and police stations (lot kind "svc", with `special` holding which one).
+// Each covers every building within SERVICE_RADIUS; upgrades add vehicles and
+// a faster response, never a bigger circle.
+const SERVICES = {
+  fire: { icon: "🚒", name: "Fire station", vehicle: "fire truck", incident: "🔥", about: "Puts out fires before buildings burn down." },
+  police: { icon: "🚓", name: "Police station", vehicle: "police car", incident: "🦹", about: "Stops robberies before shops lose their 💰." },
+};
+const SERVICE_IDS = Object.keys(SERVICES);
+const SERVICE_RADIUS = 1500;
+const SAFETY_TIER = 2; // Town: stations unlock and emergencies start
+const UPKEEP_SHARE = 0.2; // full level-1 coverage of both kinds costs 20% of income
+const INCIDENT_TIME = { fire: 60, police: 120 }; // seconds until a fire burns / robbers escape
+const SAFETY_GRACE = 600; // seconds of play before the first emergency
+// The town only runs while the player is around, and for this long after their last tap.
+const ACTIVE_GRACE = 3600 * 1000;
 
 // Factories start appearing at Town, as about 1 in 4 of the job buildings.
 const INDUSTRY_TIER = 2;
@@ -80,6 +96,10 @@ class City {
     this.stats = { scans: 0, kinds: {}, collected: 0 };
     this.createdAt = Date.now();
     this.lastSeen = Date.now();
+    this.lastActive = Date.now(); // last time the player touched the game
+    this.safetyGrace = SAFETY_GRACE;
+    this.incidents = []; // live emergencies (never saved: they only happen while playing)
+    this.unpaid = false; // couldn't pay station upkeep, so the stations stopped responding
   }
 
   // A brand new city: one road, one house, one shop, middle of nowhere.
@@ -118,7 +138,239 @@ class City {
     for (const l of this.lots) {
       if (l.kind === "special" && l.building <= 0) a += SPECIALS[l.special]?.appeal || 0;
     }
+    return Math.max(0.5, a + this.safetyAppeal());
+  }
+
+  // ---- fire & police -------------------------------------------------------
+  // From Town, good coverage adds up to +25% appeal. From City, poor coverage
+  // also costs up to 15%.
+  safetyAppeal() {
+    const t = this.tierReached;
+    if (t < SAFETY_TIER) return 0;
+    const s = this.safety().score;
+    return t > SAFETY_TIER ? 0.4 * s - 0.15 : 0.25 * s;
+  }
+
+  stations(kind = null) {
+    return this.lots.filter((l) => l.kind === "svc" && (!kind || l.special === kind));
+  }
+
+  // Stations that are built, paid for and so actually respond.
+  #working(kind) {
+    return this.unpaid ? [] : this.stations(kind).filter((l) => l.building <= 0);
+  }
+
+  static covers(station, lot) {
+    const dx = station.center.x - lot.center.x, dy = station.center.y - lot.center.y;
+    return dx * dx + dy * dy <= SERVICE_RADIUS * SERVICE_RADIUS;
+  }
+
+  // Share of homes, shops and factories each service covers, cached for a
+  // couple of seconds (appeal asks for it every frame).
+  safety() {
+    const now = Date.now();
+    if (this._safety && now - this._safety.at < 2000) return this._safety;
+    const lots = this.lots.filter((l) => l.kind === "res" || l.kind === "com" || l.kind === "ind");
+    const share = (kind) => {
+      const st = this.#working(kind);
+      if (!lots.length) return st.length ? 1 : 0;
+      return lots.filter((l) => st.some((s) => City.covers(s, l))).length / lots.length;
+    };
+    const fire = share("fire"), police = share("police");
+    this._safety = { at: now, fire, police, score: (fire + police) / 2 };
+    return this._safety;
+  }
+
+  #invalidateSafety() {
+    this._safety = null;
+    this._needed = null;
+  }
+
+  // About how many stations of one kind it takes to cover the whole town
+  // (a greedy cover over building lots), refreshed every 30 s.
+  stationsNeeded() {
+    const now = Date.now();
+    if (this._needed && now - this._needed.at < 30000) return this._needed.n;
+    const lots = this.lots.filter((l) => l.kind && l.kind !== "special" && l.kind !== "svc");
+    const near = lots.map((a) => lots.filter((b) => City.covers(a, b)));
+    const left = new Set(lots);
+    let n = 0;
+    while (left.size) {
+      let best = null, bestK = 0;
+      near.forEach((list) => {
+        let k = 0;
+        for (const l of list) if (left.has(l)) k++;
+        if (k > bestK) [best, bestK] = [list, k];
+      });
+      for (const l of best) left.delete(l);
+      n++;
+    }
+    this._needed = { at: now, n: Math.max(1, n) };
+    return this._needed.n;
+  }
+
+  // Coins per second from taxes plus what every shop earns.
+  incomeRate() {
+    let shops = 0;
+    for (const l of this.lots) if (l.kind === "com" && l.building <= 0) shops += l.level;
+    return this.pop * 0.003 + shops * 0.03 * this.appealBase();
+  }
+
+  appealBase() {
+    let a = 1;
+    for (const l of this.lots) if (l.kind === "special" && l.building <= 0) a += SPECIALS[l.special]?.appeal || 0;
     return a;
+  }
+
+  // 💰 per second for one station, whatever its level: covering the whole town
+  // with level-1 stations of both kinds costs UPKEEP_SHARE of income.
+  stationUpkeep() {
+    return (this.incomeRate() * UPKEEP_SHARE) / 2 / this.stationsNeeded();
+  }
+
+  upkeepRate() {
+    return this.stations().length * this.stationUpkeep();
+  }
+
+  // Half an hour of income, a quarter more for each station of that kind you
+  // already have.
+  stationCost(kind) {
+    const base = Math.max(200, this.incomeRate() * 1800);
+    return Math.round((base * (1 + 0.25 * this.stations(kind).length)) / 10) * 10;
+  }
+
+  stationUpgradeInfo(lot) {
+    if (lot.kind !== "svc" || lot.level >= 3) return null;
+    const hours = lot.level === 1 ? 1.5 : 4;
+    const cost = Math.round(Math.max(lot.level === 1 ? 600 : 1600, this.incomeRate() * 3600 * hours) / 10) * 10;
+    return { cost, ok: this.coins >= cost && lot.building <= 0 };
+  }
+
+  // How a station of this level responds: vehicles out at once, seconds to
+  // dispatch and on scene, and how fast its vehicles drive.
+  static response(level) {
+    return { vehicles: level, dispatch: [0, 6, 3, 1][level], work: [0, 4, 3, 2][level], speed: [0, 3, 3.6, 4.2][level] };
+  }
+
+  // Builds a station on an empty lot or in place of a home, shop or factory.
+  buildStation(lot, kind, { free = false, level = 1 } = {}) {
+    if (!lot || lot.kind === "special" || lot.kind === "svc") return false;
+    const cost = free ? 0 : this.stationCost(kind);
+    if (this.coins < cost) return false;
+    if (lot.kind === "com" || lot.kind === "ind") this.#payOut(lot);
+    this.#clearIncident(lot);
+    this.coins -= cost;
+    Object.assign(lot, { kind: "svc", special: kind, level, building: 12, coins: 0 });
+    this.#invalidateSafety();
+    return true;
+  }
+
+  upgradeStation(lot) {
+    const info = this.stationUpgradeInfo(lot);
+    if (!info || !info.ok) return false;
+    this.coins -= info.cost;
+    lot.level++;
+    lot.building = 8;
+    this.#invalidateSafety();
+    return true;
+  }
+
+  // Closes a station for good (no refund). The lot develops again by demand.
+  closeStation(lot) {
+    if (!lot || lot.kind !== "svc") return false;
+    Object.assign(lot, { kind: null, special: null, level: 0, building: 0, coins: 0 });
+    this.#invalidateSafety();
+    return true;
+  }
+
+  // The nearest working station of a kind that covers `lot`, or null.
+  stationFor(lot, kind) {
+    let best = null, bestD = Infinity;
+    for (const s of this.#working(kind)) {
+      const d = distance(s.center, lot.center);
+      if (d <= SERVICE_RADIUS && d < bestD) [best, bestD] = [s, d];
+    }
+    return best;
+  }
+
+  // Emergencies, only while the player is in the game. About one every 3
+  // minutes for a 40-building town, every minute for 450 buildings.
+  tickSafety(dt, rand = Math.random) {
+    const events = [];
+    if (this.tierReached < SAFETY_TIER) return events;
+    if (this.safetyGrace > 0) {
+      this.safetyGrace -= dt;
+      return events;
+    }
+    const lots = this.lots.filter((l) => (l.kind === "res" || l.kind === "com" || l.kind === "ind") && l.building <= 0 && !l.incident);
+    if (lots.length && rand() < dt * 0.0008 * Math.sqrt(lots.length)) {
+      const shops = lots.filter((l) => l.kind !== "res");
+      const type = shops.length && rand() < 0.5 ? "police" : "fire";
+      const pool = type === "police" ? shops : lots;
+      const lot = pool[Math.floor(rand() * pool.length)];
+      const inc = { lot, type, t: 0, limit: INCIDENT_TIME[type], working: 0, responder: null };
+      lot.incident = inc;
+      this.incidents.push(inc);
+      events.push({ type: "incident", inc });
+    }
+    for (const inc of [...this.incidents]) {
+      if (inc.lot.incident !== inc) {
+        this.incidents.splice(this.incidents.indexOf(inc), 1);
+        continue;
+      }
+      if (inc.working > 0) {
+        if ((inc.working -= dt) <= 0) events.push(this.resolve(inc, "station"));
+        continue;
+      }
+      if ((inc.t += dt) >= inc.limit) events.push(this.#expire(inc));
+    }
+    return events;
+  }
+
+  // The fire burns: the building drops a level, and a level-1 building is
+  // gone. Or the robbers get away with everything the shop was holding.
+  #expire(inc) {
+    const lot = inc.lot;
+    this.#clearIncident(lot);
+    if (inc.type === "fire") {
+      const name = lot.kind;
+      if (lot.level <= 1) Object.assign(lot, { kind: null, level: 0, building: 0, coins: 0 });
+      else {
+        lot.level--;
+        lot.coins = Math.min(lot.coins, this.storeCap(lot));
+      }
+      this.#invalidateSafety();
+      return { type: "burned", inc, lost: !lot.kind, was: name };
+    }
+    const stolen = Math.floor(lot.coins);
+    lot.coins = 0;
+    return { type: "robbed", inc, stolen };
+  }
+
+  resolve(inc, by) {
+    this.#clearIncident(inc.lot);
+    this.stats.saved = (this.stats.saved || 0) + 1;
+    return { type: "resolved", inc, by };
+  }
+
+  #clearIncident(lot) {
+    const inc = lot.incident;
+    if (!inc) return;
+    lot.incident = null;
+    const i = this.incidents.indexOf(inc);
+    if (i >= 0) this.incidents.splice(i, 1);
+  }
+
+  // Paying a private crew to handle an emergency right now: 5 minutes of income.
+  crewCost() {
+    return Math.round(Math.max(30, this.incomeRate() * 300) / 5) * 5;
+  }
+
+  callCrew(inc) {
+    const cost = this.crewCost();
+    if (this.coins < cost || inc.lot.incident !== inc) return null;
+    this.coins -= cost;
+    return this.resolve(inc, "crew");
   }
 
   get tier() {
@@ -199,11 +451,14 @@ class City {
         lot.building -= dt;
         if (lot.building <= 0) {
           lot.building = 0;
+          if (lot.kind === "svc") this.#invalidateSafety();
           events.push({ type: "built", lot });
         }
         continue;
       }
-      if (lot.kind === "com") {
+      if (lot.incident && lot.incident.type === "police") {
+        // robbers in the shop: nothing earned until they're gone
+      } else if (lot.kind === "com") {
         lot.coins = Math.min(lot.coins + lot.level * 0.03 * appeal * dt, this.storeCap(lot));
       } else if (lot.kind === "ind") {
         lot.coins = Math.min(lot.coins + lot.level * this.goodsRate * dt, this.storeCap(lot)); // 🧱, stored in `coins`
@@ -228,11 +483,25 @@ class City {
     else this.pop = Math.max(cap, this.pop - dt * 0.5);
     this.coins += dt * this.pop * 0.003;
 
+    // Station upkeep. Without the coins for it, stations stop responding until
+    // there's a minute of upkeep in the bank again.
+    const rate = this.upkeepRate(), upkeep = rate * dt;
+    if (upkeep > 0) {
+      const unpaid = this.unpaid ? this.coins < rate * 60 : this.coins < upkeep;
+      if (!unpaid) this.coins -= upkeep;
+      if (unpaid !== this.unpaid) {
+        this.unpaid = unpaid;
+        this.#invalidateSafety();
+        events.push({ type: unpaid ? "unpaid" : "paid" });
+      }
+    } else this.unpaid = false;
+
     const tier = this.tier;
     if (tier > this.tierReached) {
       for (let t = this.tierReached + 1; t <= tier; t++) {
         this.materials += TIERS[t].reward || 0;
         events.push({ type: "tier", tier: t });
+        if (t === SAFETY_TIER) events.push({ type: "safetyUnlocked" });
       }
       this.tierReached = tier;
     }
@@ -270,6 +539,7 @@ class City {
   // Fast-forwards time (offline progress). Returns a summary of what changed.
   simulate(seconds) {
     const before = { pop: this.pop, coins: this.coins, roads: this.roadCount, built: this.lots.filter((l) => l.kind).length };
+    const upkeep = this.upkeepRate() * seconds;
     const step = seconds > 3600 ? 2 : 1;
     for (let s = 0; s < seconds; s += step) this.tick(step);
     return {
@@ -277,6 +547,7 @@ class City {
       coins: Math.floor(this.coins - before.coins),
       roads: this.roadCount - before.roads,
       built: this.lots.filter((l) => l.kind).length - before.built,
+      upkeep: Math.floor(upkeep),
     };
   }
 
@@ -301,7 +572,7 @@ class City {
   }
 
   bagReady(lot) {
-    return (lot.kind === "com" || lot.kind === "ind") && lot.building <= 0 && lot.coins >= Math.max(1, this.storeCap(lot) * 0.25);
+    return (lot.kind === "com" || lot.kind === "ind") && lot.building <= 0 && !lot.incident && lot.coins >= Math.max(1, this.storeCap(lot) * 0.25);
   }
 
   // Collects a shop's 💰 or a factory's 🧱, minus `cut` (the collector's fee).
@@ -337,8 +608,14 @@ class City {
   // shop or factory was holding is collected first.
   placeSpecial(lot, id) {
     const i = this.inventory.indexOf(id);
-    if (i < 0 || !lot || lot.kind === "special") return false;
+    if (i < 0 || !lot || lot.kind === "special" || lot.kind === "svc") return false;
+    if (SPECIALS[id].station) {
+      if (!this.buildStation(lot, SPECIALS[id].station, { free: true, level: 2 })) return false;
+      this.inventory.splice(i, 1);
+      return true;
+    }
     if (lot.kind === "com" || lot.kind === "ind") this.#payOut(lot);
+    this.#clearIncident(lot);
     this.inventory.splice(i, 1);
     Object.assign(lot, { kind: "special", special: id, level: 1, building: 6, coins: 0 });
     return true;
@@ -423,6 +700,8 @@ class City {
       stats: this.stats,
       createdAt: this.createdAt,
       lastSeen: Date.now(),
+      lastActive: this.lastActive,
+      safetyGrace: this.safetyGrace,
     };
   }
 
@@ -437,8 +716,13 @@ class City {
       lot.coins = s[3];
       lot.special = s[4] || null;
     });
-    for (const k of ["materials", "coins", "pop", "roadJob", "roadChoice", "inventory", "scanned", "daily", "market", "tierReached", "stats", "createdAt", "lastSeen"]) {
+    for (const k of ["materials", "coins", "pop", "roadJob", "roadChoice", "inventory", "scanned", "daily", "market", "tierReached", "stats", "createdAt", "lastSeen", "lastActive", "safetyGrace"]) {
       if (data[k] !== undefined) city[k] = data[k];
+    }
+    if (data.lastActive === undefined) city.lastActive = city.lastSeen;
+    // Fire Station drops placed before stations existed become level-2 stations.
+    for (const lot of city.lots) {
+      if (lot.kind === "special" && SPECIALS[lot.special]?.station) Object.assign(lot, { kind: "svc", special: SPECIALS[lot.special].station, level: 2 });
     }
     return city;
   }
@@ -453,6 +737,7 @@ class City {
       if (l.kind === "res") return "abc"[l.effectiveLevel - 1];
       if (l.kind === "com") return "ABC"[l.effectiveLevel - 1];
       if (l.kind === "ind") return "xyz"[l.effectiveLevel - 1];
+      if (l.kind === "svc") return (l.special === "fire" ? "FGH" : "PQR")[l.effectiveLevel - 1];
       return String(Math.max(0, SPECIAL_IDS.indexOf(l.special)));
     }).join("");
     const data = {
@@ -483,6 +768,8 @@ class City {
       if ("abc".includes(ch)) Object.assign(lot, { kind: "res", level: "abc".indexOf(ch) + 1 });
       else if ("ABC".includes(ch)) Object.assign(lot, { kind: "com", level: "ABC".indexOf(ch) + 1 });
       else if ("xyz".includes(ch)) Object.assign(lot, { kind: "ind", level: "xyz".indexOf(ch) + 1 });
+      else if ("FGH".includes(ch)) Object.assign(lot, { kind: "svc", special: "fire", level: "FGH".indexOf(ch) + 1 });
+      else if ("PQR".includes(ch)) Object.assign(lot, { kind: "svc", special: "police", level: "PQR".indexOf(ch) + 1 });
       else Object.assign(lot, { kind: "special", level: 1, special: SPECIAL_IDS[+ch] || "park" });
     });
     city.pop = data.u || 0;

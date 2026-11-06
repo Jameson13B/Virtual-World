@@ -86,6 +86,10 @@ button.big { width: 100%; padding: 14px; font-size: 17px; }
   transition: transform 0.15s;
 }
 .chip.bump { transform: scale(1.15); }
+.chip[hidden] { display: none; }
+#safetyChip.alert { box-shadow: 0 0 0 2px #ef4444; animation: alertPulse 1s ease-in-out infinite; }
+@keyframes alertPulse { 50% { background: rgba(127, 29, 29, 0.85); } }
+.card.incident { border-color: #ef4444; background: rgba(127, 29, 29, 0.25); }
 .road-bar {
   position: relative;
   margin-top: 6px;

@@ -86,6 +86,8 @@ class CityRenderer {
         items = [new LotModel(lot, road, "shop", lvl)];
       } else if (lot.kind === "ind") {
         items = [new LotModel(lot, road, "factory", lvl)];
+      } else if (lot.kind === "svc") {
+        items = [new LotModel(lot, road, lot.special, lvl)];
       } else if (lot.kind === "special") {
         items = [new LotModel(lot, road, lot.special)];
         if (lot.special === "park") {
@@ -104,7 +106,7 @@ class CityRenderer {
   }
 
   // ---- drawing ---------------------------------------------------------------
-  draw(ctx, viewport, { placing = false, roadPick = -1, selected = null, cars = [], player = null, floaters = [], now = 0 } = {}) {
+  draw(ctx, viewport, { placing = false, roadPick = -1, selected = null, cars = [], player = null, floaters = [], now = 0, coverage = null } = {}) {
     const city = this.city;
     if (city.version !== this.version) this.#rebuild();
     const view = viewport.getVisibleBounds();
@@ -117,6 +119,7 @@ class CityRenderer {
       if (!visible(lot.poly.bounds)) continue;
       this.#drawLotGround(ctx, lot, placing, now, z, vp);
     }
+    if (coverage) this.#drawCoverage(ctx, coverage, z, visible);
 
     // road under construction
     if (this.pending && city.roadJob) {
@@ -209,7 +212,8 @@ class CityRenderer {
     for (const lot of city.lots) {
       if (!visible(lot.poly.bounds)) continue;
       if (city.bagReady(lot)) this.#drawBubble(ctx, lot, vp, z, now);
-      if (placing && lot.kind && lot.kind !== "special") {
+      if (lot.incident) this.#drawIncident(ctx, lot, vp, z, now);
+      if (placing && lot.kind && lot.kind !== "special" && lot.kind !== "svc") {
         // a special can replace this building too
         ctx.setLineDash([16, 12]);
         lot.poly.draw(ctx, { fill: "rgba(0,0,0,0)", stroke: "rgba(250,204,21,0.8)", lineWidth: 5 * Math.max(1, z * 0.6) });
@@ -264,6 +268,79 @@ class CityRenderer {
     ctx.textBaseline = "middle";
     ctx.fillText(lot.kind === "ind" ? "📦" : "💰", 0, bob + 1);
     ctx.restore();
+  }
+
+  // Where an emergency's bubble floats, above the building.
+  incidentAnchor(lot, vp) {
+    return getFake3dPoint(lot.center, vp, 110);
+  }
+
+  // A fire: flames and smoke on the lot. A robbery: flashing red and blue.
+  // Either way a bubble with a ring that runs down as time runs out.
+  #drawIncident(ctx, lot, vp, z, now) {
+    const inc = lot.incident, fire = inc.type === "fire";
+    const t = now / 1000;
+    if (fire) {
+      for (let k = 0; k < 7; k++) {
+        const ph = (t * 0.8 + k / 7 + lot.id * 0.17) % 1;
+        const jx = Math.sin(k * 2.1 + lot.id) * 30, jy = Math.cos(k * 1.7) * 18;
+        const p = getFake3dPoint(add(lot.center, new Point(jx, jy)), vp, 20 + ph * 90);
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, (16 - ph * 10) * Math.max(1, z * 0.5), 0, Math.PI * 2);
+        ctx.fillStyle = ph < 0.5 ? "rgba(251,146,60," + (0.9 - ph) + ")" : "rgba(120,113,108," + (0.7 - ph * 0.6).toFixed(2) + ")";
+        ctx.fill();
+      }
+    } else {
+      const on = Math.sin(t * Math.PI * 4) > 0;
+      lot.poly.draw(ctx, { fill: "rgba(0,0,0,0)", stroke: on ? "rgba(239,68,68,0.9)" : "rgba(59,130,246,0.9)", lineWidth: 8 * Math.max(1, z * 0.5) });
+    }
+    const p = this.incidentAnchor(lot, vp);
+    const r = 24 * Math.max(1, z * 0.75);
+    const left = inc.working > 0 ? 1 : 1 - inc.t / inc.limit;
+    ctx.save();
+    ctx.translate(p.x, p.y);
+    ctx.rotate(-(ctx.viewAngle || 0));
+    const bob = Math.sin(now / 200 + lot.id) * 3 * z;
+    ctx.beginPath();
+    ctx.arc(0, bob, r, 0, Math.PI * 2);
+    ctx.fillStyle = inc.working > 0 ? "rgba(220,252,231,0.95)" : "rgba(255,255,255,0.95)";
+    ctx.fill();
+    ctx.lineWidth = 5 * Math.max(1, z * 0.6);
+    ctx.strokeStyle = "rgba(0,0,0,0.15)";
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(0, bob, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * left);
+    ctx.strokeStyle = inc.working > 0 ? "#22c55e" : left < 0.3 ? "#ef4444" : "#f97316";
+    ctx.stroke();
+    ctx.font = r * 1.1 + "px serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(inc.working > 0 ? SERVICES[inc.type].icon : SERVICES[inc.type].incident, 0, bob + 1);
+    ctx.restore();
+  }
+
+  // Circles around every station of one kind, and a red outline on the
+  // buildings none of them reach.
+  #drawCoverage(ctx, kind, z, visible) {
+    const stations = this.city.stations(kind);
+    const color = kind === "fire" ? "239,68,68" : "59,130,246";
+    ctx.beginPath();
+    for (const st of stations) {
+      ctx.moveTo(st.center.x + SERVICE_RADIUS, st.center.y);
+      ctx.arc(st.center.x, st.center.y, SERVICE_RADIUS, 0, Math.PI * 2);
+    }
+    ctx.fillStyle = "rgba(" + color + ",0.16)";
+    ctx.fill();
+    ctx.setLineDash([30, 20]);
+    ctx.lineWidth = 8 * Math.max(1, z * 0.8);
+    ctx.strokeStyle = "rgba(" + color + ",0.7)";
+    ctx.stroke();
+    ctx.setLineDash([]);
+    for (const lot of this.city.lots) {
+      if (!lot.kind || lot.kind === "special" || lot.kind === "svc" || !visible(lot.poly.bounds)) continue;
+      if (stations.some((st) => City.covers(st, lot))) continue;
+      lot.poly.draw(ctx, { fill: "rgba(239,68,68,0.18)", stroke: "rgba(239,68,68,0.6)", lineWidth: 4 });
+    }
   }
 
   // Dashed ghost roads numbered 1–3, each with the outlines of its new lots.
