@@ -21,6 +21,7 @@ const TILE_UPP = [4, 12];
 const COARSE_ZOOM = 3.5;
 const MAX_TILES = 80;
 const BRIDGE_W = ROAD_W + 40;
+const TUNNEL_W = ROAD_W + 30;
 
 class CityRenderer {
   constructor(city) {
@@ -40,11 +41,16 @@ class CityRenderer {
     const job = this.city.roadJob;
     this.pending = job ? new Segment(new Point(job.a.x, job.a.y), new Point(job.b.x, job.b.y)) : null;
     this.pendingEnvelope = this.pending ? new Envelope(this.pending, ROAD_W, 10) : null;
-    // Stretches of road over water become bridges.
+    // Stretches of road over water become bridges, through rock tunnels.
     this.bridges = [];
+    this.tunnels = [];
+    const terrain = this.city.terrain;
     for (const s of this.pending ? [...g.segments, this.pending] : g.segments) {
-      for (const [t0, t1] of this.city.terrain.waterSpans(s.p1, s.p2)) this.bridges.push(new Segment(lerp2D(s.p1, s.p2, t0), lerp2D(s.p1, s.p2, t1)));
+      const piece = ([t0, t1]) => new Segment(lerp2D(s.p1, s.p2, t0), lerp2D(s.p1, s.p2, t1));
+      this.bridges.push(...terrain.waterSpans(s.p1, s.p2).map(piece));
+      this.tunnels.push(...terrain.rockSpans(s.p1, s.p2).map(piece));
     }
+    this.tunnelCovers = this.tunnels.map((t) => rectAround(t.p1, t.p2, TUNNEL_W / 2));
     // Roads on offer: ghost roads with the lots each would open.
     this.choices = (this.city.roadChoice || []).map((o) => {
       const seg = new Segment(new Point(o.a.x, o.a.y), new Point(o.b.x, o.b.y));
@@ -131,6 +137,44 @@ class CityRenderer {
     const sharp = z > COARSE_ZOOM ? [] : tilesIn(0);
     if (!sharp.length || sharp.some((t) => !this.tiles.has("0:" + t.tx + "," + t.ty))) paint(tilesIn(1));
     paint(sharp);
+  }
+
+  // The mountain is painted back over the road (and the cars inside), leaving
+  // a faint dashed trail between two stone portals.
+  #drawTunnels(ctx, view, z) {
+    ctx.save();
+    ctx.beginPath();
+    for (const poly of this.tunnelCovers) {
+      const pts = poly.points;
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+      ctx.closePath();
+    }
+    ctx.clip();
+    this.#drawTerrain(ctx, view, z);
+    ctx.restore();
+
+    ctx.beginPath();
+    for (const t of this.tunnels) {
+      ctx.moveTo(t.p1.x, t.p1.y);
+      ctx.lineTo(t.p2.x, t.p2.y);
+    }
+    ctx.setLineDash([22, 18]);
+    ctx.lineWidth = 8;
+    ctx.lineCap = "butt";
+    ctx.strokeStyle = "rgba(30,25,20,0.35)";
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    for (const t of this.tunnels) {
+      const d = t.directionVector();
+      for (const [end, out] of [[t.p1, scale(d, -1)], [t.p2, d]]) {
+        // a stone arch facing out of the mountain, dark inside
+        const a = add(end, scale(out, -16)), b = add(end, scale(out, 6));
+        new Segment(a, b).draw(ctx, { width: TUNNEL_W + 16, color: "#a8a29e" });
+        new Segment(a, add(end, scale(out, 2))).draw(ctx, { width: ROAD_W - 6, color: "#1c1917" });
+      }
+    }
   }
 
   #visualFor(lot) {
@@ -252,6 +296,7 @@ class CityRenderer {
 
     for (const car of cars) if (visible({ minX: car.x - 40, minY: car.y - 40, maxX: car.x + 40, maxY: car.y + 40 })) car.draw(ctx);
     if (player) player.draw(ctx);
+    if (this.tunnels.length) this.#drawTunnels(ctx, view, z);
 
     // buildings and trees, far to near
     const items = [];

@@ -10,7 +10,7 @@ const CHANGELOG = [
     notes: [
       "🗺️ Pick your land when you start a new town: Woodland, Beach, Grand River, Mountains, Great Bay, Lake Country or Islands",
       "🌊 Towns can grow beside oceans, rivers and lakes, with sandy beaches, rolling hills and snowy peaks",
-      "🌉 Roads can bridge short stretches of water and cut through mountain passes",
+      "🌉 Roads can bridge rivers and channels, and tunnel through mountains",
       "🎲 Every map is one of a kind – start two Beach towns and you'll get two different coastlines",
       "🌲 Your current town keeps its forest exactly as it is",
     ],

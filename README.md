@@ -19,7 +19,7 @@ Its roads, buildings and rendering engine come from freeCodeCamp's
 👥 people move in → 💰 taxes + shop income, 🧱 from factories → ⬆️ upgrades → bigger tiers
 ```
 
-- **Maps:** a new town starts by picking its land: 🌲 Woodland, 🏖️ Beach, 🏞️ Grand River, ⛰️ Mountains, 🌊 Great Bay, 🛶 Lake Country or 🏝️ Islands. Each card previews the exact map you'll get, and 🎲 deals new ones, so two towns of the same type never match. Roads and lots stay on dry land, but a road can bridge or cut through up to 600 units of water or rock. Towns from before maps existed stay on the classic flat forest.
+- **Maps:** a new town starts by picking its land: 🌲 Woodland, 🏖️ Beach, 🏞️ Grand River, ⛰️ Mountains, 🌊 Great Bay, 🛶 Lake Country or 🏝️ Islands. Each card previews the exact map you'll get, and 🎲 deals new ones, so two towns of the same type never match. Roads and lots stay on dry land, but a road can bridge up to 600 units of water and tunnel through up to 400 of rock. Towns from before maps existed stay on the classic flat forest.
 - **Scanning:** what a code is for decides the reward. Wi-Fi codes give power and coins, contact cards bring families, product barcodes bring goods, and restaurant menus, parking meters, museums and social links each have their own flavor. The exact contents of a code decide the amounts and the rare drops, so the same sticker gives every player the same reward. Each code counts once per town, and URLs ignore `?query` strings so one restaurant's 30 table codes count as one.
 - **Rare drops:** parks, fountains, schools, clinics, fire stations, libraries, a Sky Tower, a stadium and a Ferris wheel. Place them on an empty lot, or on top of a home, shop or factory to replace it, to raise ✨ appeal, which makes the town grow faster. A placed special can go back in the bag at any time.
 - **Factories:** from Town (40 people) on, about 1 in 4 job buildings is a 🏭 factory. Factories fill up with 🧱 and show a 📦 crate to tap, a small boost on top of scanning.
@@ -91,5 +91,5 @@ so future changes to the growth algorithm won't break old links.
 ### Tuning
 
 - **Pacing:** `City.roadCost()`, `#develop()` (demand formulas), `tick()` (growth rates, shop income), `factoryRate()` and `INDUSTRY_SHARE` (factories), and the `TIERS` and `SPECIALS` tables in `js/game/city.js`.
-- **Maps:** the `TERRAIN_SHAPES` height functions, `CROSS_MAX` and the `TERRAIN_COLORS` in `js/game/terrain.js`. Changing a shape moves the land under existing towns of that type, so add a new type instead.
+- **Maps:** the `TERRAIN_SHAPES` height functions, `BRIDGE_MAX` / `TUNNEL_MAX` and the `TERRAIN_COLORS` in `js/game/terrain.js`. Changing a shape moves the land under existing towns of that type, so add a new type instead.
 - **Rewards:** the `SCAN_KINDS` and `URL_FLAVORS` tables in `js/game/rewards.js`.

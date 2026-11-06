@@ -9,13 +9,14 @@
 //   height < 0              water (deeper the lower)
 //   0 ≤ height < SHORE      beach or river bank
 //   SHORE ≤ height < ROCK   grass and hills: buildable
-//   height ≥ ROCK           bare rock, snow above SNOW: not buildable
+//   height ≥ ROCK           bare rock, snow above SNOW: not buildable (roads tunnel through)
 // ---------------------------------------------------------------------------
 
 const SHORE = 0.05;
 const ROCK = 0.62;
 const SNOW = 0.84;
-const CROSS_MAX = 600; // longest stretch of water or rock a road can bridge or cut through
+const BRIDGE_MAX = 600; // most water a road can cross (rivers are up to ~630 wide)
+const TUNNEL_MAX = 400; // most rock a road can tunnel through
 
 // `sea`: sandy beaches instead of grassy banks. "classic" is the flat forest
 // every town had before map types; old saves keep it, so it isn't offered.
@@ -260,19 +261,21 @@ class Terrain {
     return !this.flat && this.height(x, y) < 0;
   }
 
-  // Whether a road from a to b stays on land, apart from at most CROSS_MAX of
-  // water (a bridge) or rock (a mountain pass) in total.
+  // Whether a road from a to b stays on land, apart from at most BRIDGE_MAX of
+  // water (bridges) and TUNNEL_MAX of rock (tunnels).
   roadFits(a, b) {
     if (this.flat) return true;
     if (!this.buildable(a.x, a.y) || !this.buildable(b.x, b.y)) return false;
     const len = distance(a, b);
     const n = Math.max(2, Math.ceil(len / 25));
-    let blocked = 0;
+    let wet = 0, rock = 0;
     for (let i = 1; i < n; i++) {
       const t = i / n;
-      if (!this.buildable(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t)) blocked += len / n;
+      const h = this.height(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t);
+      if (h < 0) wet += len / n;
+      else if (h >= ROCK) rock += len / n;
     }
-    return blocked <= CROSS_MAX;
+    return wet <= BRIDGE_MAX && rock <= TUNNEL_MAX;
   }
 
   // Whether a building lot (a 4-point polygon) sits on buildable land.
@@ -288,17 +291,26 @@ class Terrain {
     return true;
   }
 
-  // Stretches of a road that run over water, as [t0, t1] fractions (for bridges).
+  // Stretches of a road that run over water (bridges) or through rock
+  // (tunnels), as [t0, t1] fractions along it.
   waterSpans(a, b) {
+    return this.#spans(a, b, (h) => h < 0);
+  }
+
+  rockSpans(a, b) {
+    return this.#spans(a, b, (h) => h >= ROCK);
+  }
+
+  #spans(a, b, inside) {
     if (this.flat) return [];
     const n = Math.max(2, Math.ceil(distance(a, b) / 20));
     const spans = [];
     let start = -1;
     for (let i = 0; i <= n; i++) {
       const t = i / n;
-      const wet = this.isWater(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t);
-      if (wet && start < 0) start = t;
-      if (!wet && start >= 0) {
+      const on = inside(this.height(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t));
+      if (on && start < 0) start = t;
+      if (!on && start >= 0) {
         spans.push([Math.max(0, start - 0.5 / n), t - 0.5 / n]);
         start = -1;
       }
