@@ -17,6 +17,16 @@ const CHANGELOG = [
     ],
   },
   {
+    version: "0.10.0",
+    notes: [
+      "🗺️ Pick your land when you start a new town: Woodland, Beach, Grand River, Mountains, Great Bay, Lake Country or Islands",
+      "🌊 Towns can grow beside oceans, rivers and lakes, with sandy beaches, rolling hills and snowy peaks",
+      "🌉 Roads can bridge rivers and channels, and tunnel through mountains",
+      "🎲 Every map is one of a kind – start two Beach towns and you'll get two different coastlines",
+      "🌲 Your current town keeps its forest exactly as it is",
+    ],
+  },
+  {
     version: "0.9.1",
     notes: [
       "🏡 New homes: a cottage with a picket fence grows into a row of townhouses, then an apartment block with solar panels",

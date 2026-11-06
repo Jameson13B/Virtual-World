@@ -783,7 +783,7 @@ function townStatsCard() {
     "<div class='stat'><b>" + city.stats.scans + "</b><span>📷 codes scanned</span></div>" +
     "<div class='stat'><b>" + city.roadCount + "</b><span>🛣️ roads</span></div>" +
     "<div class='stat'><b>" + age + "</b><span>📅 days old</span></div></div>" +
-    "<p class='muted' id='rankLine'>Seed #" + city.seed + " – no other town in the world has these roads.</p></div>";
+    "<p class='muted' id='rankLine'>" + MAP_TYPES[city.map].icon + " " + MAP_TYPES[city.map].name + " · seed #" + city.seed + " – no other town in the world has this land and these roads.</p></div>";
 }
 
 function townRows(towns, { rankFrom = 1, removable = false } = {}) {
@@ -1120,15 +1120,17 @@ function openSettings() {
     body.querySelector("#sReset").addEventListener("click", () => {
       if (!confirm("Start over with a brand new town? Your current town will be gone forever.")) return;
       if (!confirm("Really? This can't be undone.")) return;
-      city = City.create();
-      renderer = new CityRenderer(city);
-      ui.cars = [];
-      saveGame();
-      syncOnline(true);
       closeSheet();
-      viewport.zoom = 1.3;
-      viewport.lookAt(city.center());
-      showWelcome(true);
+      openMapPicker((map, seed) => {
+        city = City.create(seed, map);
+        renderer = new CityRenderer(city);
+        ui.cars = [];
+        saveGame();
+        syncOnline(true);
+        viewport.zoom = 1.3;
+        viewport.lookAt(city.center());
+        showWelcome(true);
+      }, true);
     });
     body.querySelector("#versionLabel").addEventListener("click", () => {
       if (prefs.extras) return;
@@ -1165,6 +1167,87 @@ function openSettings() {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Choosing the land for a new town
+// ---------------------------------------------------------------------------
+// Every card is a real map: its seed is the town you get if you pick it, so the
+// preview shows that town's own coast, river or mountains. 🎲 deals new ones.
+const PREVIEW_PX = 150;
+const PREVIEW_AREA = 7000; // world units across a preview
+function openMapPicker(onPick, cancellable = false) {
+  let picks = [], chosen = -1, job = 0;
+  const deal = () => {
+    picks = MAP_IDS.map((id) => ({ id, seed: randomSeed() }));
+    chosen = -1;
+    $("#mapCards").innerHTML = picks.map((p, i) => {
+      const m = MAP_TYPES[p.id];
+      return "<button class='map-card' data-map='" + i + "'><canvas width='" + PREVIEW_PX + "' height='" + PREVIEW_PX + "'></canvas>" +
+        "<b>" + m.icon + " " + m.name + "</b><small>" + esc(m.about) + "</small></button>";
+    }).join("");
+    updateStart();
+    // One preview per frame so the picker opens right away.
+    const mine = ++job;
+    const canvases = $("#mapCards").querySelectorAll("canvas");
+    const next = (i) => {
+      if (mine !== job || i >= picks.length) return;
+      drawMapPreview(canvases[i], picks[i]);
+      requestAnimationFrame(() => next(i + 1));
+    };
+    requestAnimationFrame(() => next(0));
+  };
+  const updateStart = () => {
+    $("#mapCards").querySelectorAll("[data-map]").forEach((b) => b.classList.toggle("on", +b.dataset.map === chosen));
+    const btn = $("#mapStart");
+    btn.disabled = chosen < 0;
+    btn.textContent = chosen < 0 ? "Pick a map" : "Found " + cityNameFromSeed(picks[chosen].seed) + " " + MAP_TYPES[picks[chosen].id].icon;
+  };
+  const close = () => {
+    job++;
+    $("#mapPicker").hidden = true;
+    $("#mapCards").onclick = $("#mapDeal").onclick = $("#mapStart").onclick = $("#mapCancel").onclick = null;
+  };
+  $("#mapCards").onclick = (e) => {
+    const b = e.target.closest("[data-map]");
+    if (!b) return;
+    chosen = +b.dataset.map;
+    updateStart();
+    buzz(15);
+  };
+  $("#mapDeal").onclick = deal;
+  $("#mapStart").onclick = () => {
+    if (chosen < 0) return;
+    const p = picks[chosen];
+    close();
+    onPick(p.id, p.seed);
+  };
+  $("#mapCancel").hidden = !cancellable;
+  $("#mapCancel").onclick = close;
+  $("#mapPicker").hidden = false;
+  deal();
+}
+
+// The map around a town's first road, as it will look in the game.
+function drawMapPreview(canvas, { id, seed }) {
+  const terrain = new Terrain(id, seed);
+  const c = canvas.getContext("2d");
+  const upp = PREVIEW_AREA / PREVIEW_PX;
+  const image = c.createImageData(PREVIEW_PX, PREVIEW_PX);
+  paintTerrain(terrain, image, -PREVIEW_AREA / 2, -PREVIEW_AREA / 2, upp, 1);
+  c.putImageData(image, 0, 0);
+  const road = new CityLayout(seed, null, terrain).graph.segments[0];
+  const px = (p) => [p.x / upp + PREVIEW_PX / 2, p.y / upp + PREVIEW_PX / 2];
+  c.lineCap = "round";
+  c.strokeStyle = "#0f172a";
+  c.lineWidth = 7;
+  c.beginPath();
+  c.moveTo(...px(road.p1));
+  c.lineTo(...px(road.p2));
+  c.stroke();
+  c.strokeStyle = "#e5e7eb";
+  c.lineWidth = 3.5;
+  c.stroke();
+}
+
 function showWelcome(fresh) {
   showModal({
     icon: "🏕️",
@@ -1176,7 +1259,7 @@ function showWelcome(fresh) {
       "🏠 <b>New roads bring homes and shops</b>, which bring people.<br>" +
       "💰 <b>Tap coin bubbles</b> on shops to collect.<br>" +
       "🎁 Claim your <b>daily gift</b> to keep a streak.</p>" +
-      "<p class='muted'>No two towns are alike – yours was grown from seed #" + city.seed + ".</p>",
+      "<p class='muted'>No two towns are alike – yours was grown on " + MAP_TYPES[city.map].icon + " " + MAP_TYPES[city.map].name + " seed #" + city.seed + ".</p>",
     button: fresh ? "Let's grow!" : "Got it",
     extra: fresh && online.enabled ? { label: "I already have a town", onClick: () => openEmailFlow("signin") } : null,
   });
@@ -1647,6 +1730,7 @@ for (const ev of ["pointerdown", "keydown", "wheel"]) addEventListener(ev, markA
 
 // Progress made while the app was closed: only up to an hour after your last tap.
 function catchUp() {
+  if (!city) return; // still choosing a map
   const now = Date.now();
   const away = (now - city.lastSeen) / 1000;
   const worked = Math.max(0, (Math.min(now, city.lastActive + ACTIVE_GRACE) - city.lastSeen) / 1000);
@@ -1677,6 +1761,7 @@ function catchUp() {
 // ---------------------------------------------------------------------------
 // Boot
 // ---------------------------------------------------------------------------
+// A brand new player first picks the land their town grows on.
 (function boot() {
   const saved = readJSON(SAVE_KEY, null);
   if (saved) {
@@ -1686,8 +1771,14 @@ function catchUp() {
       console.error("Save unreadable", e);
     }
   }
-  const fresh = !city;
-  if (fresh) city = City.create();
+  if (city) return start(false);
+  openMapPicker((map, seed) => {
+    city = City.create(seed, map);
+    start(true);
+  });
+})();
+
+function start(fresh) {
   renderer = new CityRenderer(city);
   viewport.lookAt(city.center());
   if (fresh) {
@@ -1719,4 +1810,4 @@ function catchUp() {
   if ("serviceWorker" in navigator && location.protocol === "https:") {
     navigator.serviceWorker.register("sw.js").catch(() => {});
   }
-})();
+}
