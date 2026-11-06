@@ -89,6 +89,20 @@
     </div>
   </div>
 
+  <!-- choosing the land for a new town -->
+  <div id="mapPicker" hidden>
+    <div class="map-head">
+      <h2>🗺️ Where will your town grow?</h2>
+      <button id="mapCancel" class="icon-btn" aria-label="Cancel">✕</button>
+    </div>
+    <p class="muted">Every map is one of a kind – no two Beach towns share a coastline.</p>
+    <div id="mapCards"></div>
+    <div class="map-actions">
+      <button id="mapDeal" class="ghost">🎲 Other maps</button>
+      <button id="mapStart" class="gold big" disabled>Pick a map</button>
+    </div>
+  </div>
+
   <!-- camera scanner -->
   <div id="scanOverlay" hidden>
     <video id="scanVideo" playsinline muted></video>
@@ -119,6 +133,7 @@
   <script src="js/car/car.js"></script>
   <script src="js/car/trafficCar.js"></script>
   <script src="js/viewport.js"></script>
+  <script src="js/game/terrain.js"></script>
   <script src="js/game/layout.js"></script>
   <script src="js/game/city.js"></script>
   <script src="js/game/rewards.js"></script>

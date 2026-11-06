@@ -60,11 +60,15 @@ function marketPeriod(d = new Date()) {
   return todayKey(d) + "/" + Math.floor(d.getHours() / MARKET_HOURS);
 }
 
+const randomSeed = () => (Math.random() * 4294967296) >>> 0;
+
 class City {
-  constructor({ seed, name, graph = null }) {
+  constructor({ seed, name, graph = null, map = "classic" }) {
     this.seed = seed;
     this.name = name || cityNameFromSeed(seed);
-    this.layout = new CityLayout(seed, graph);
+    this.terrain = new Terrain(map, seed);
+    this.map = this.terrain.type;
+    this.layout = new CityLayout(seed, graph, this.terrain);
     this.version = 0; // bumps whenever geometry changes (for the renderer)
 
     this.materials = 0;
@@ -82,9 +86,10 @@ class City {
     this.lastSeen = Date.now();
   }
 
-  // A brand new city: one road, one house, one shop, middle of nowhere.
-  static create(seed = (Math.random() * 4294967296) >>> 0) {
-    const city = new City({ seed });
+  // A brand new city: one road, one house, one shop, middle of nowhere. `map`
+  // is one of MAP_IDS; towns from before map types are "classic".
+  static create(seed = randomSeed(), map = "classic") {
+    const city = new City({ seed, map });
     const lots = city.layout.lots;
     const home = lots[0];
     const shop = lots.find((l) => l.center.x * home.center.x + l.center.y * home.center.y < 0 && l !== home) || lots[1];
@@ -407,6 +412,7 @@ class City {
     return {
       v: 1,
       seed: this.seed,
+      map: this.map,
       name: this.name,
       graph: this.layout.graph.toJSON(),
       lots: this.lots.map((l) => [l.kind || 0, l.level, +l.building.toFixed(1), +l.coins.toFixed(2), l.special || 0]),
@@ -427,7 +433,7 @@ class City {
   }
 
   static fromSave(data) {
-    const city = new City({ seed: data.seed, name: data.name, graph: data.graph });
+    const city = new City({ seed: data.seed, name: data.name, graph: data.graph, map: data.map });
     (data.lots || []).forEach((s, i) => {
       const lot = city.lots[i];
       if (!lot) return;
@@ -459,6 +465,7 @@ class City {
       v: 1,
       n: this.name,
       s: this.seed,
+      m: this.map,
       p: g.points.flatMap((p) => [p.x, p.y]),
       e: g.segments.flatMap((s) => [index.get(s.p1), index.get(s.p2)]),
       l: lotChars,
@@ -476,7 +483,7 @@ class City {
     for (let i = 0; i < data.p.length; i += 2) pts.push({ x: data.p[i], y: data.p[i + 1] });
     const segs = [];
     for (let i = 0; i < data.e.length; i += 2) segs.push({ p1: pts[data.e[i]], p2: pts[data.e[i + 1]] });
-    const city = new City({ seed: data.s, name: data.n, graph: { points: pts, segments: segs } });
+    const city = new City({ seed: data.s, name: data.n, graph: { points: pts, segments: segs }, map: data.m });
     [...data.l].forEach((ch, i) => {
       const lot = city.lots[i];
       if (!lot || ch === ".") return;

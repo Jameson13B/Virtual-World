@@ -13,12 +13,22 @@ function uprightText(ctx, text, x, y, dy = 0, stroke = false) {
 const SHOP_BAG_HEIGHTS = [0, 46, 80, 30];
 const RARITY_GLOW = { uncommon: "34,197,94", rare: "59,130,246", legendary: "245,158,11" };
 
+// Terrain is painted into square tiles of TILE_PX pixels: sharp ones (4 world
+// units per pixel) close up, coarse ones (12) when zoomed far out. Phones keep
+// at most MAX_TILES of them.
+const TILE_PX = 192;
+const TILE_UPP = [4, 12];
+const COARSE_ZOOM = 3.5;
+const MAX_TILES = 80;
+const BRIDGE_W = ROAD_W + 40;
+
 class CityRenderer {
   constructor(city) {
     this.city = city;
     this.version = -1;
     this.treeCache = new Map();
     this.visuals = new Map();
+    this.tiles = new Map();
   }
 
   #rebuild() {
@@ -30,6 +40,11 @@ class CityRenderer {
     const job = this.city.roadJob;
     this.pending = job ? new Segment(new Point(job.a.x, job.a.y), new Point(job.b.x, job.b.y)) : null;
     this.pendingEnvelope = this.pending ? new Envelope(this.pending, ROAD_W, 10) : null;
+    // Stretches of road over water become bridges.
+    this.bridges = [];
+    for (const s of this.pending ? [...g.segments, this.pending] : g.segments) {
+      for (const [t0, t1] of this.city.terrain.waterSpans(s.p1, s.p2)) this.bridges.push(new Segment(lerp2D(s.p1, s.p2, t0), lerp2D(s.p1, s.p2, t1)));
+    }
     // Roads on offer: ghost roads with the lots each would open.
     this.choices = (this.city.roadChoice || []).map((o) => {
       const seg = new Segment(new Point(o.a.x, o.a.y), new Point(o.b.x, o.b.y));
@@ -49,10 +64,10 @@ class CityRenderer {
     if (h % 100 < 12 + patch * 0.55) {
       const jx = ((h >>> 8) % 1000) / 1000, jy = ((h >>> 18) % 1000) / 1000;
       const p = new Point(cx * CELL + jx * CELL * 0.8, cy * CELL + jy * CELL * 0.8);
-      let ok = true;
+      let ok = this.city.terrain.treeFits(p.x, p.y);
       const roads = [...this.city.layout.graph.segments];
       if (this.pending) roads.push(this.pending);
-      for (const s of roads) {
+      for (const s of ok ? roads : []) {
         if (s.distanceToPoint(p) < ROAD_W / 2 + 75) {
           ok = false;
           break;
@@ -70,6 +85,52 @@ class CityRenderer {
     }
     this.treeCache.set(key, tree);
     return tree;
+  }
+
+  // ---- terrain: water, beaches, hills and mountains ----
+  #tile(lod, tx, ty, deadline) {
+    const key = lod + ":" + tx + "," + ty;
+    let tile = this.tiles.get(key);
+    if (tile) {
+      this.tiles.delete(key); // most recently used goes last
+    } else {
+      if (performance.now() > deadline) return null;
+      // One pixel of padding on every side keeps tile edges seamless when smoothed.
+      const upp = TILE_UPP[lod], size = TILE_PX * upp;
+      tile = document.createElement("canvas");
+      tile.width = tile.height = TILE_PX + 2;
+      const tctx = tile.getContext("2d");
+      const image = tctx.createImageData(TILE_PX + 2, TILE_PX + 2);
+      paintTerrain(this.city.terrain, image, tx * size - upp, ty * size - upp, upp);
+      tctx.putImageData(image, 0, 0);
+      if (this.tiles.size >= MAX_TILES) this.tiles.delete(this.tiles.keys().next().value);
+    }
+    this.tiles.set(key, tile);
+    return tile;
+  }
+
+  // Paints new tiles for at most ~8 ms a frame. Until the sharp tiles are
+  // ready, the coarse ones stand in for them.
+  #drawTerrain(ctx, view, z) {
+    if (this.city.terrain.flat) return;
+    const deadline = performance.now() + 8;
+    const tilesIn = (lod) => {
+      const size = TILE_PX * TILE_UPP[lod], out = [];
+      for (let tx = Math.floor(view.minX / size); tx * size <= view.maxX; tx++) {
+        for (let ty = Math.floor(view.minY / size); ty * size <= view.maxY; ty++) out.push({ lod, tx, ty, size });
+      }
+      return out;
+    };
+    const paint = (list) => {
+      for (const t of list) {
+        const tile = this.#tile(t.lod, t.tx, t.ty, deadline);
+        // drawn one screen pixel bigger so no hairline gaps show between tiles
+        if (tile) ctx.drawImage(tile, 1, 1, TILE_PX, TILE_PX, t.tx * t.size, t.ty * t.size, t.size + z, t.size + z);
+      }
+    };
+    const sharp = z > COARSE_ZOOM ? [] : tilesIn(0);
+    if (!sharp.length || sharp.some((t) => !this.tiles.has("0:" + t.tx + "," + t.ty))) paint(tilesIn(1));
+    paint(sharp);
   }
 
   #visualFor(lot) {
@@ -112,10 +173,18 @@ class CityRenderer {
     const z = viewport.zoom;
     const visible = (b) => boundsOverlap(b, view);
 
+    this.#drawTerrain(ctx, view, z);
+
     // lot grounds
     for (const lot of city.lots) {
       if (!visible(lot.poly.bounds)) continue;
       this.#drawLotGround(ctx, lot, placing, now, z, vp);
+    }
+
+    // bridge decks, with their shadow on the water
+    for (const b of this.bridges) {
+      new Segment(add(b.p1, new Point(14, 18)), add(b.p2, new Point(14, 18))).draw(ctx, { width: BRIDGE_W, color: "rgba(0,25,50,0.3)" });
+      b.draw(ctx, { width: BRIDGE_W, color: "#8a7f74" });
     }
 
     // road under construction
@@ -165,6 +234,20 @@ class CityRenderer {
     }
     ctx.lineWidth = 4;
     ctx.lineCap = "round";
+    ctx.stroke();
+
+    // bridge railings
+    ctx.beginPath();
+    for (const b of this.bridges) {
+      const n = scale(perpendicular(b.directionVector()), BRIDGE_W / 2 - 5);
+      for (const side of [n, scale(n, -1)]) {
+        ctx.moveTo(b.p1.x + side.x, b.p1.y + side.y);
+        ctx.lineTo(b.p2.x + side.x, b.p2.y + side.y);
+      }
+    }
+    ctx.lineWidth = 6;
+    ctx.lineCap = "butt";
+    ctx.strokeStyle = "#e7e5e4";
     ctx.stroke();
 
     for (const car of cars) if (visible({ minX: car.x - 40, minY: car.y - 40, maxX: car.x + 40, maxY: car.y + 40 })) car.draw(ctx);

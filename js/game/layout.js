@@ -5,7 +5,8 @@
 // the roads before it, so every player's city is unique, and a shared city can
 // be rebuilt exactly on another phone. Only +,-,*,/ and sqrt are used for
 // geometry here because those give identical results on every device
-// (unlike sin/cos/hypot).
+// (unlike sin/cos/hypot). The terrain (terrain.js) follows the same rule, as
+// roads and lots stay on dry, buildable land.
 // ---------------------------------------------------------------------------
 
 const ROAD_W = 100;
@@ -71,8 +72,9 @@ class Lot {
 }
 
 class CityLayout {
-  constructor(seed, graphInfo = null) {
+  constructor(seed, graphInfo = null, terrain = new Terrain("classic", seed)) {
     this.seed = seed;
+    this.terrain = terrain;
     this.lots = [];
     this.roadRects = [];
     if (graphInfo) {
@@ -181,6 +183,7 @@ class CityLayout {
       const back = scale(dir, -1);
       if (this.incidentDirs(e).some((d) => dot(d, back) > 0.5)) return false;
     }
+    if (!this.terrain.roadFits(a, e)) return false;
     const seg = new Segment(a, e);
     for (const s of this.graph.segments) {
       const touchesA = s.includes(a);
@@ -240,6 +243,7 @@ class CityLayout {
   }
 
   #lotFits(poly) {
+    if (!this.terrain.lotFits(poly)) return false;
     const center = average(poly.points[0], poly.points[2]);
     for (const rect of this.roadRects) {
       if (!boundsOverlap(rect.bounds, poly.bounds)) continue;
