@@ -6,6 +6,12 @@
 
 const CHANGELOG = [
   {
+    version: "0.12.1",
+    notes: [
+      "💬 Tell us what you think! ⚙️ Settings → 💬 Send feedback: pick your favorite look, rate the game and leave a note",
+    ],
+  },
+  {
     version: "0.12.0",
     notes: [
       "🧊 Try the new 3D look! Turn it on in ⚙️ Settings → Look & feel, and switch back any time. Tell us which one you like better",

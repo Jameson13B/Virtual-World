@@ -404,6 +404,15 @@ button.ghost { background: transparent; box-shadow: none; }
 .toggle-row input:checked + .switch::after { transform: translateX(20px); }
 .beta { display: inline-block; margin-left: 4px; padding: 1px 7px; border-radius: 99px; background: linear-gradient(135deg, #3b82f6, #8b5cf6); font-size: 10px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; vertical-align: 2px; }
 
+/* feedback */
+.fb-choices { display: flex; gap: 8px; margin: 8px 0 4px; }
+.fb-choice { flex: 1; padding: 12px 6px; font-size: 15px; border-radius: 14px; }
+.fb-choice.on { background: rgba(250, 204, 21, 0.2); border-color: #facc15; transform: translateY(-2px); }
+.fb-stars { display: flex; justify-content: center; gap: 6px; }
+.fb-stars button { background: none; border: none; box-shadow: none; padding: 2px 6px; font-size: 34px; color: #475569; line-height: 1; }
+.fb-stars button.on { color: #facc15; text-shadow: 0 2px 8px rgba(250, 204, 21, 0.45); }
+#fbText { font-family: var(--font); font-size: 15px; min-height: 96px; resize: vertical; }
+
 /* ---------- modal ---------- */
 #modalBackdrop {
   position: fixed; inset: 0;

@@ -104,6 +104,20 @@ game.js only talks to a renderer through `draw()`, `pickMarker()`, `lotAt()`, `c
 - **Keep 3D:** delete `render.js` and `models.js` (move `wildTreeAt`/`TREE_CELL` into `lowpoly/trees3d.js` first), their `<script>` tags, the classic branch in `makeRenderer()` and the toggle in `openSettings()`, and default `prefs.look` to `"lowpoly"` (load it at boot).
 - **Keep classic:** delete `js/game/lowpoly/` and `vendor/three.module.min.js`, the 3D branch in `makeRenderer()`, the toggle, `#city3d`, the 🗺️ lens button and `#lensLegend`.
 
+### Reading feedback
+
+Players send feedback from ⚙️ Settings → 💬 Send feedback (and get asked once after 10 minutes in the 3D look).
+It lands in the `feedback` table: Supabase → **Table Editor → feedback**, or in the SQL Editor:
+
+```sql
+-- the look vote so far
+select prefers, count(*), round(avg(rating), 1) as avg_rating from public.feedback group by prefers;
+-- newest messages
+select created_at, prefers, rating, look, message, city_name, pop from public.feedback order by created_at desc limit 50;
+```
+
+Players can add feedback but can't read anyone's, including their own.
+
 ### Tuning
 
 - **Pacing:** `City.roadCost()`, `#develop()` (demand formulas), `tick()` (growth rates, shop income), `factoryRate()` and `INDUSTRY_SHARE` (factories), and the `TIERS` and `SPECIALS` tables in `js/game/city.js`.

@@ -265,6 +265,14 @@ class Online {
     return error ? null : data;
   }
 
+  // Sends one piece of feedback. Returns true once it's stored.
+  async sendFeedback(entry) {
+    if (!this.ready) return false;
+    const { error } = await this.sb.from("feedback").insert({ ...entry, user_id: this.user.id });
+    if (error) console.warn("Feedback not sent:", error.message);
+    return !error;
+  }
+
   // Attaches an email to this (anonymous) account so the town can be recovered.
   async linkEmail(email) {
     const { error } = await this.sb.auth.updateUser({ email }, { emailRedirectTo: location.origin + location.pathname });

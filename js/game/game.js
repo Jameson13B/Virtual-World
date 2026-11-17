@@ -6,7 +6,7 @@
 const $ = (sel) => document.querySelector(sel);
 const SAVE_KEY = "vw.city";
 const PREFS_KEY = "vw.gamePrefs";
-const VERSION = "0.12.0";
+const VERSION = "0.12.1";
 
 const canvas = $("#cityCanvas");
 const ctx = canvas.getContext("2d");
@@ -1292,6 +1292,7 @@ function openSettings() {
     toggle("sLook", "🧊 New 3D look <span class='beta'>beta</span>", prefs.look === "lowpoly", "Try it out – switch back any time") +
     (prefs.look === "lowpoly" ? toggle("sDayNight", "🌗 Day &amp; night", prefs.dayNight !== false, "The sun follows your clock") : "") +
     toggle("sSounds", "🔊 Sounds", prefs.sounds !== false) +
+    (online.enabled ? "<button id='sFeedback' class='primary big' style='margin-top:6px'>💬 Send feedback</button>" : "") +
     "</div>" +
     "<div class='btn-col'>" +
     "<button id='sRename'>✏️ Rename town</button>" +
@@ -1321,6 +1322,8 @@ function openSettings() {
         sfx.play("coin");
       }
     });
+    const fb = body.querySelector("#sFeedback");
+    if (fb) fb.addEventListener("click", openFeedback);
     body.querySelector("#sRename").addEventListener("click", () => $("#cityName").click());
     body.querySelector("#sHelp").addEventListener("click", () => {
       closeSheet();
@@ -1402,6 +1405,100 @@ function openSettings() {
       body.querySelector("#xSandbox").addEventListener("click", () => (location.href = "sandbox.html"));
       body.querySelector("#xTrain").addEventListener("click", () => (location.href = "sandbox.html#train"));
     }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Feedback: which look players prefer, a rating and a note. Sent to Supabase
+// (the feedback table); kept on the phone and retried if it can't send yet.
+// ---------------------------------------------------------------------------
+const FEEDBACK_NUDGE = 600; // seconds of play in the 3D look before we ask once
+
+function openFeedback() {
+  const pick = { prefers: null, rating: 0 };
+  const choice = (id, label) => "<button class='fb-choice' data-prefers='" + id + "'>" + label + "</button>";
+  const html =
+    "<p>Thanks for playing! We read every message.</p>" +
+    "<div class='card'><h3>Which look do you like best?</h3><div class='fb-choices'>" +
+    choice("3d", "🧊 3D") + choice("classic", "🖼️ Classic") + choice("both", "🤷 Both") + "</div>" +
+    "<p class='muted'>Switch any time in ⚙️ Settings → Look &amp; feel to compare.</p></div>" +
+    "<div class='card'><h3>How's the game so far?</h3><div class='fb-stars'>" +
+    [1, 2, 3, 4, 5].map((n) => "<button data-star='" + n + "' aria-label='" + n + " stars'>★</button>").join("") + "</div></div>" +
+    "<textarea id='fbText' maxlength='2000' placeholder='Anything else? What you love, what bugs you, ideas…'></textarea>" +
+    "<button id='fbSend' class='gold big' style='margin-top:10px' disabled>Send feedback</button>";
+  openSheet("💬 Feedback", html, (body) => {
+    const send = body.querySelector("#fbSend"), text = body.querySelector("#fbText");
+    const update = () => {
+      body.querySelectorAll("[data-prefers]").forEach((b) => b.classList.toggle("on", b.dataset.prefers === pick.prefers));
+      body.querySelectorAll("[data-star]").forEach((b) => b.classList.toggle("on", +b.dataset.star <= pick.rating));
+      send.disabled = !pick.prefers && !pick.rating && !text.value.trim();
+    };
+    body.querySelectorAll("[data-prefers]").forEach((b) => b.addEventListener("click", () => {
+      pick.prefers = b.dataset.prefers;
+      sfx.play("tap");
+      update();
+    }));
+    body.querySelectorAll("[data-star]").forEach((b) => b.addEventListener("click", () => {
+      pick.rating = +b.dataset.star;
+      sfx.play("tap");
+      update();
+    }));
+    text.addEventListener("input", update);
+    send.addEventListener("click", () => {
+      queueFeedback({
+        prefers: pick.prefers,
+        rating: pick.rating || null,
+        message: text.value.trim().slice(0, 2000),
+        look: prefs.look === "lowpoly" ? "3d" : "classic",
+        version: VERSION,
+        device: navigator.userAgent.slice(0, 200),
+        city_name: city.name.slice(0, 24),
+        pop: Math.floor(city.pop),
+      });
+      prefs.feedbackAsked = true;
+      savePrefs();
+      closeSheet();
+      sfx.play("reward");
+      toast("💌 Thanks! Your feedback is on its way");
+    });
+  });
+}
+
+function queueFeedback(entry) {
+  prefs.feedbackQueue = [...(prefs.feedbackQueue || []), entry].slice(-10);
+  savePrefs();
+  flushFeedback();
+}
+
+let flushingFeedback = false;
+async function flushFeedback() {
+  if (flushingFeedback || !online.ready || !prefs.feedbackQueue?.length) return;
+  flushingFeedback = true;
+  try {
+    while (prefs.feedbackQueue.length) {
+      if (!(await online.sendFeedback(prefs.feedbackQueue[0]))) break;
+      prefs.feedbackQueue.shift();
+      savePrefs();
+    }
+  } finally {
+    flushingFeedback = false;
+  }
+}
+
+// After a while in the 3D look, ask once what they think.
+function trackFeedbackNudge(dt) {
+  if (prefs.feedbackAsked || !online.enabled || visit || !renderer?.is3d || !$("#modalBackdrop").hidden || !$("#sheet").hidden) return;
+  prefs.time3d = (prefs.time3d || 0) + dt;
+  if (prefs.time3d < FEEDBACK_NUDGE) return;
+  prefs.feedbackAsked = true;
+  savePrefs();
+  showModal({
+    icon: "🧊",
+    title: "How's the 3D look?",
+    body: "You've been playing with the new look for a while. Which do you like better, 3D or classic? It takes ten seconds.",
+    button: "Give feedback",
+    onClose: openFeedback,
+    extra: { label: "Maybe later", onClick: () => {} },
   });
 }
 
@@ -1939,8 +2036,10 @@ function loop(now) {
     barTimer = 0;
     updateTopbar();
   }
+  trackFeedbackNudge(dt);
   if ((saveTimer += dt) > 10) {
     saveTimer = 0;
+    savePrefs(); // keeps the 3D play time for the feedback nudge
     saveGame();
     if (now - lastSync > 120000) syncOnline();
   }
@@ -2053,6 +2152,7 @@ function start(fresh) {
     const t = location.hash.match(/^#town=([^&]+)/);
     if (t) visitHandle(t[1]).then((found) => found || history.replaceState(null, "", location.pathname + location.search));
     offerCloudTown(false).then(() => syncOnline(true));
+    flushFeedback();
   });
   requestAnimationFrame(loop);
 
