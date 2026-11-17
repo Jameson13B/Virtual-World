@@ -23,6 +23,24 @@ const MAX_TILES = 80;
 const BRIDGE_W = ROAD_W + 40;
 const TUNNEL_W = ROAD_W + 30;
 
+// The wild tree in forest cell (cx, cy), or null. Deterministic from the
+// town's seed, and cleared around roads (plus the one being built) and lots,
+// so every look puts the same trees in the same spots.
+const TREE_CELL = 190;
+function wildTreeAt(city, cx, cy, pending = null) {
+  const seed = city.seed;
+  const patch = hashInts(seed, 5, Math.floor(cx / 5), Math.floor(cy / 5)) % 100;
+  const h = hashInts(seed, 3, cx, cy);
+  if (h % 100 >= 12 + patch * 0.55) return null;
+  const jx = ((h >>> 8) % 1000) / 1000, jy = ((h >>> 18) % 1000) / 1000;
+  const p = new Point(cx * TREE_CELL + jx * TREE_CELL * 0.8, cy * TREE_CELL + jy * TREE_CELL * 0.8);
+  if (!city.terrain.treeFits(p.x, p.y)) return null;
+  for (const s of city.layout.graph.segments) if (s.distanceToPoint(p) < ROAD_W / 2 + 75) return null;
+  if (pending && pending.distanceToPoint(p) < ROAD_W / 2 + 75) return null;
+  for (const lot of city.lots) if (lot.poly.boundsDistance(p) < 55) return null;
+  return new Tree(p, 110 + (h % 45), { height: 140 + (h % 60), tint: ((h >>> 4) % 200) / 100 - 1 });
+}
+
 class CityRenderer {
   constructor(city) {
     this.city = city;
@@ -61,36 +79,8 @@ class CityRenderer {
   // ---- wilderness: an endless procedural forest, cleared where the city is ----
   #wildTree(cx, cy) {
     const key = cx + "," + cy;
-    if (this.treeCache.has(key)) return this.treeCache.get(key);
-    const seed = this.city.seed;
-    const CELL = 190;
-    const patch = hashInts(seed, 5, Math.floor(cx / 5), Math.floor(cy / 5)) % 100;
-    const h = hashInts(seed, 3, cx, cy);
-    let tree = null;
-    if (h % 100 < 12 + patch * 0.55) {
-      const jx = ((h >>> 8) % 1000) / 1000, jy = ((h >>> 18) % 1000) / 1000;
-      const p = new Point(cx * CELL + jx * CELL * 0.8, cy * CELL + jy * CELL * 0.8);
-      let ok = this.city.terrain.treeFits(p.x, p.y);
-      const roads = [...this.city.layout.graph.segments];
-      if (this.pending) roads.push(this.pending);
-      for (const s of ok ? roads : []) {
-        if (s.distanceToPoint(p) < ROAD_W / 2 + 75) {
-          ok = false;
-          break;
-        }
-      }
-      if (ok) {
-        for (const lot of this.city.lots) {
-          if (lot.poly.boundsDistance(p) < 55) {
-            ok = false;
-            break;
-          }
-        }
-      }
-      if (ok) tree = new Tree(p, 110 + (h % 45), { height: 140 + (h % 60), tint: ((h >>> 4) % 200) / 100 - 1 });
-    }
-    this.treeCache.set(key, tree);
-    return tree;
+    if (!this.treeCache.has(key)) this.treeCache.set(key, wildTreeAt(this.city, cx, cy, this.pending));
+    return this.treeCache.get(key);
   }
 
   // ---- terrain: water, beaches, hills and mountains ----
@@ -216,6 +206,7 @@ class CityRenderer {
     if (city.version !== this.version) this.#rebuild();
     const view = viewport.getVisibleBounds();
     const vp = viewport.getViewPoint();
+    this.vp = vp;
     const z = viewport.zoom;
     const visible = (b) => boundsOverlap(b, view);
 
@@ -307,7 +298,7 @@ class CityRenderer {
       if (!visible(lot.poly.bounds)) continue;
       for (const it of this.#visualFor(lot)) items.push(it);
     }
-    const CELL = 190;
+    const CELL = TREE_CELL;
     const simpleTrees = z > 2.4;
     const x0 = Math.floor((view.minX - 200) / CELL), x1 = Math.ceil((view.maxX + 50) / CELL);
     const y0 = Math.floor((view.minY - 200) / CELL), y1 = Math.ceil((view.maxY + 50) / CELL);
@@ -363,6 +354,30 @@ class CityRenderer {
       ctx.globalAlpha = 1;
     }
   }
+
+  // ---- the renderer interface game.js uses (shared with the 3D look) ------
+  // The 💰/📦 bubble or emergency marker at a tapped point, if any.
+  pickMarker(world, screen, z) {
+    const vp = this.vp || this.city.center();
+    for (const inc of this.city.incidents) {
+      if (distance(this.incidentAnchor(inc.lot, vp), world) < 36 * Math.max(1, z * 0.75)) return { incident: true, lot: inc.lot };
+    }
+    for (const lot of this.city.lots) {
+      if (this.city.bagReady(lot) && distance(this.bubbleAnchor(lot, vp), world) < 34 * Math.max(1, z * 0.75)) return { bubble: true, lot };
+    }
+    return null;
+  }
+
+  lotAt(world) {
+    return this.city.lots.find((l) => l.poly.containsPoint(world)) || null;
+  }
+
+  // Where floating text and flying coins start from for a lot.
+  anchor(lot) {
+    return this.bubbleAnchor(lot, this.vp || this.city.center());
+  }
+
+  dispose() {}
 
   bubbleAnchor(lot, vp) {
     const h = lot.kind === "ind" ? 34 + lot.level * 8 : SHOP_BAG_HEIGHTS[Math.max(1, lot.effectiveLevel)];

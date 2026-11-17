@@ -13,6 +13,7 @@
   <link rel="stylesheet" href="css/game.css" />
 </head>
 <body>
+  <canvas id="city3d" hidden></canvas>
   <canvas id="cityCanvas"></canvas>
 
   <header id="topbar">
@@ -32,7 +33,11 @@
   </header>
 
   <button id="collectorChip" hidden>🚚 <b></b></button>
-  <button id="compassBtn" class="icon-btn" aria-label="Point north" hidden>🧭</button>
+  <div id="mapTools">
+    <button id="compassBtn" class="icon-btn" aria-label="Point north" hidden>🧭</button>
+    <button id="lensBtn" class="icon-btn" aria-label="Map view" hidden>🗺️</button>
+  </div>
+  <div id="lensLegend" hidden></div>
 
   <div id="visitBanner" hidden>
     <span>👀 Visiting <b id="visitName"></b></span>

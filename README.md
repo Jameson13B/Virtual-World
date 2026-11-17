@@ -27,6 +27,7 @@ Its roads, buildings and rendering engine come from freeCodeCamp's
 - **Offline progress:** the town keeps growing for up to 1 hour while the app is closed.
 - **Social:** your town's name is your username, so you're on the 🏆 world leaderboard automatically. Add friends and visit anyone's town by name or link (read-only). If two towns share a name, the newer one gets a number added (oakstead2). Each scan also tells you how many explorers have found that code before you.
 - **Cloud save:** every player gets a silent account, so progress backs up automatically. Adding an email makes the town recoverable on a new phone.
+- **Two looks:** the classic top-down map, or the new low-poly 3D look (beta) with map views by zone, level and fire/police coverage, level badges and day & night. Switch in ⚙️ Settings → Look & feel; the choice is saved per device.
 - **Hidden extras:** in ⚙️ Settings, tap the version number 5 times. That unlocks driving around your town, typing a code to simulate a scan, fast-forwarding time, the sandbox editor and AI car training.
 
 ## Run it
@@ -66,8 +67,14 @@ js/game/terrain.js           map types: deterministic oceans, rivers, lakes, hil
 js/game/layout.js            deterministic road growth + building lots
 js/game/city.js              economy, tiers, specials, save/share codes
 js/game/rewards.js           scan classification and rewards
-js/game/render.js            map rendering (lots, construction, forest, bubbles)
-js/game/models.js            3D models for every building: homes, shops, factories, specials
+js/game/render.js            classic look: map rendering (lots, construction, forest, bubbles)
+js/game/models.js            classic look: fake-3D models for every building
+js/game/lowpoly/             3D look (beta), loaded only when switched on:
+  index.js, renderer.js        entry point; the scene, camera, lights, lots and lenses
+  ground.js, roads3d.js        terrain, water, roads, bridges, tunnels, ghost roads
+  models3d.js, kit.js          low-poly building models and the kit they're built with
+  trees3d.js, vehicles3d.js    instanced forest, cars and trucks
+  overlay.js                   bubbles, badges and labels drawn over the 3D view
 js/game/scanner.js           camera scanning (BarcodeDetector or jsQR) + photo fallback
 js/game/touch.js             pan / pinch / tap
 js/game/online.js            Supabase: accounts, leaderboard, friends, cloud save
@@ -77,6 +84,7 @@ supabase/schema.sql          database tables + security rules
 netlify.toml                 hosting config
 vendor/jsQR.js               QR decoder (for iPhones, which lack BarcodeDetector)
 vendor/supabase.js           supabase-js 2.45.4
+vendor/three.module.min.js   three.js r169 (3D look only)
 sandbox.html + js/main.js    the original editor/driving/AI sandbox (hidden extra)
 ```
 
@@ -87,6 +95,14 @@ the player's pick is saved in the road graph. A pending choice waits (even offli
 Its geometry, and the terrain from the town's map type and seed, use only `+ - * /`, `sqrt` and `floor`, which give identical results on every device,
 so a town rebuilt from a share code matches on any phone. Share codes also carry the road graph itself,
 so future changes to the growth algorithm won't break old links.
+
+### The two looks
+
+game.js only talks to a renderer through `draw()`, `pickMarker()`, `lotAt()`, `choiceAt()`, `anchor()`, `borders` and `dispose()`;
+`makeRenderer()` picks `CityRenderer` (classic) or the 3D one from `prefs.look`. To keep just one look later:
+
+- **Keep 3D:** delete `render.js` and `models.js` (move `wildTreeAt`/`TREE_CELL` into `lowpoly/trees3d.js` first), their `<script>` tags, the classic branch in `makeRenderer()` and the toggle in `openSettings()`, and default `prefs.look` to `"lowpoly"` (load it at boot).
+- **Keep classic:** delete `js/game/lowpoly/` and `vendor/three.module.min.js`, the 3D branch in `makeRenderer()`, the toggle, `#city3d`, the 🗺️ lens button and `#lensLegend`.
 
 ### Tuning
 

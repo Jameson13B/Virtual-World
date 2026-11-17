@@ -21,6 +21,9 @@ class Viewport {
     };
     this.spaceDown = false;
     this.onUserPan = () => {};
+    // Optional 3D camera: { toWorld(screen), toScreen(world) }. When set,
+    // screen ↔ world goes through it instead of the flat top-down mapping.
+    this.projector = null;
     this.#addEventListeners();
   }
 
@@ -63,12 +66,27 @@ class Viewport {
 
   // Screen pixels → world point, and a screen-space vector → world vector.
   toWorld(screen) {
-    return subtract(this.toWorldVector(subtract(screen, this.center)), this.offset);
+    if (this.projector) return this.projector.toWorld(screen);
+    return subtract(this.#flatVector(subtract(screen, this.center)), this.offset);
   }
 
   toWorldVector(v) {
+    if (this.projector) return subtract(this.projector.toWorld(add(this.center, v)), this.projector.toWorld(this.center));
+    return this.#flatVector(v);
+  }
+
+  #flatVector(v) {
     const c = Math.cos(this.angle), s = Math.sin(this.angle);
     return new Point((v.x * c + v.y * s) * this.zoom, (-v.x * s + v.y * c) * this.zoom);
+  }
+
+  // World point → screen pixels (the inverse of toWorld).
+  toScreen(p) {
+    if (this.projector) return this.projector.toScreen(p);
+    const o = this.getOffset();
+    const x = (p.x + o.x) / this.zoom, y = (p.y + o.y) / this.zoom;
+    const c = Math.cos(this.angle), s = Math.sin(this.angle);
+    return new Point(this.center.x + x * c - y * s, this.center.y + x * s + y * c);
   }
 
   getOffset() {

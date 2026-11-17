@@ -6,7 +6,7 @@
 const $ = (sel) => document.querySelector(sel);
 const SAVE_KEY = "vw.city";
 const PREFS_KEY = "vw.gamePrefs";
-const VERSION = "0.11.0";
+const VERSION = "0.12.0";
 
 const canvas = $("#cityCanvas");
 const ctx = canvas.getContext("2d");
@@ -14,14 +14,14 @@ const viewport = new Viewport(canvas, 1.3);
 viewport.minZoom = 0.35;
 viewport.maxZoom = 8;
 
-const prefs = { extras: false, welcomed: false, seenVersion: null, ...readJSON(PREFS_KEY, {}) };
+const prefs = { extras: false, welcomed: false, seenVersion: null, look: "classic", dayNight: true, sounds: true, ...readJSON(PREFS_KEY, {}) };
 const savePrefs = () => writeJSON(PREFS_KEY, prefs);
 
 let city = null;
 let renderer = null;
 let visit = null; // { city, renderer } while looking at someone else's town
 const online = new Online(window.VW_CONFIG);
-const ui = { placing: null, placeStation: null, roadPick: null, focus: null, selected: null, floaters: [], cars: [], drive: null, follow: null, collector: null, responders: [] };
+const ui = { placing: null, placeStation: null, roadPick: null, focus: null, selected: null, floaters: [], cars: [], drive: null, follow: null, collector: null, responders: [], lens: "normal" };
 
 function readJSON(key, fallback = null) {
   try {
@@ -111,8 +111,10 @@ $("#modalOk").addEventListener("click", () => {
   renderModal();
 });
 
+// Floating text at a point, or above a lot (over its roof in the 3D look).
 function floater(p, text, color) {
-  ui.floaters.push({ x: p.x, y: p.y, text, color, age: 0, life: 1.3 });
+  if (p instanceof Lot) p = renderer.is3d ? renderer.anchor(p) : p.center;
+  ui.floaters.push({ x: p.x, y: p.y, h: p.h, text, color, age: 0, life: 1.3 });
 }
 
 function buzz(ms = 30) {
@@ -124,6 +126,178 @@ function bump(id) {
   el.classList.add("bump");
   setTimeout(() => el.classList.remove("bump"), 160);
 }
+
+// Coins (or bricks) arc from a point on screen to their counter at the top.
+function flyCoins(from, toSel, icon, amount) {
+  if (!from || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  const target = $(toSel).parentElement.getBoundingClientRect();
+  const tx = target.left + target.width / 2, ty = target.top + target.height / 2;
+  const n = clamp(Math.round(Math.sqrt(amount)), 3, 7);
+  for (let i = 0; i < n; i++) {
+    const el = document.createElement("div");
+    el.className = "fly-coin";
+    el.textContent = icon;
+    el.style.left = from.x + "px";
+    el.style.top = from.y + "px";
+    document.body.appendChild(el);
+    const spread = (i - (n - 1) / 2) * 14;
+    const mid = { x: (from.x + tx) / 2 + spread * 2, y: Math.min(from.y, ty) - 60 - Math.random() * 40 };
+    el.animate(
+      [
+        { transform: "translate(-50%,-50%) scale(0.4)", opacity: 0 },
+        { transform: "translate(calc(-50% + " + (mid.x - from.x) + "px), calc(-50% + " + (mid.y - from.y) + "px)) scale(1.15)", opacity: 1, offset: 0.45 },
+        { transform: "translate(calc(-50% + " + (tx - from.x) + "px), calc(-50% + " + (ty - from.y) + "px)) scale(0.6)", opacity: 0.9 },
+      ],
+      { duration: 650 + i * 70, easing: "cubic-bezier(.5,0,.3,1)", delay: i * 35 }
+    ).onfinish = () => {
+      el.remove();
+      if (i === n - 1) bump(toSel);
+    };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Sounds: tiny synthesized effects (no audio files). Off in ⚙️ Settings.
+// ---------------------------------------------------------------------------
+const sfx = {
+  ctx: null,
+  unlock() {
+    if (this.ctx || prefs.sounds === false) return;
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (AC) this.ctx = new AC();
+  },
+  // A short run of tones: [frequency, start, length] in Hz and seconds.
+  tones(notes, { type = "sine", gain = 0.12 } = {}) {
+    const ac = this.ctx;
+    if (!ac || prefs.sounds === false || document.hidden) return;
+    if (ac.state === "suspended") ac.resume();
+    const t0 = ac.currentTime + 0.01;
+    for (const [f, at, len] of notes) {
+      const o = ac.createOscillator(), g = ac.createGain();
+      o.type = type;
+      o.frequency.setValueAtTime(f, t0 + at);
+      g.gain.setValueAtTime(0, t0 + at);
+      g.gain.linearRampToValueAtTime(gain, t0 + at + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.001, t0 + at + len);
+      o.connect(g).connect(ac.destination);
+      o.start(t0 + at);
+      o.stop(t0 + at + len + 0.05);
+    }
+  },
+  play(name) {
+    const S = {
+      coin: [[1318, 0, 0.08], [1760, 0.06, 0.16]],
+      build: [[220, 0, 0.12], [330, 0.08, 0.16]],
+      upgrade: [[523, 0, 0.1], [659, 0.08, 0.1], [784, 0.16, 0.22]],
+      road: [[392, 0, 0.12], [523, 0.1, 0.12], [659, 0.2, 0.25]],
+      fanfare: [[523, 0, 0.14], [659, 0.12, 0.14], [784, 0.24, 0.14], [1046, 0.36, 0.4]],
+      reward: [[880, 0, 0.1], [1174, 0.08, 0.1], [1568, 0.16, 0.25]],
+      alert: [[740, 0, 0.14], [554, 0.16, 0.14], [740, 0.32, 0.14]],
+      tap: [[660, 0, 0.05]],
+    };
+    if (!S[name]) return;
+    this.tones(S[name], { type: name === "alert" ? "square" : name === "build" ? "triangle" : "sine", gain: name === "alert" ? 0.05 : name === "tap" ? 0.04 : 0.1 });
+  },
+};
+
+// ---------------------------------------------------------------------------
+// The two looks: classic (render.js) and the low-poly 3D beta (lowpoly/).
+// The 3D look is loaded on demand, so classic players never download it.
+// ---------------------------------------------------------------------------
+const canvas3d = $("#city3d");
+let lowpoly = null;
+const LENSES = [
+  { id: "normal", icon: "🗺️", label: "Normal view" },
+  { id: "zones", icon: "🎨", label: "Zones", legend: [["#22c55e", "Homes"], ["#3b82f6", "Shops"], ["#f59e0b", "Factories"], ["#d946ef", "Specials"], ["#ef4444", "Stations"]] },
+  { id: "levels", icon: "📶", label: "Levels", legend: [["#38bdf8", "Level 1"], ["#a78bfa", "Level 2"], ["#f59e0b", "Level 3"], [null, "🔒 needs more people"]] },
+  { id: "fire", icon: "🚒", label: "Fire coverage", legend: [["#ef4444", "Station reach"], ["#f87171", "Not covered"]] },
+  { id: "police", icon: "🚓", label: "Police coverage", legend: [["#3b82f6", "Station reach"], ["#f87171", "Not covered"]] },
+];
+const LENS_COVERAGE = { fire: true, police: true };
+
+async function loadLowPoly() {
+  if (!lowpoly) lowpoly = await import("./lowpoly/index.js");
+  return lowpoly;
+}
+
+function makeRenderer(c, readOnly = false) {
+  if (prefs.look === "lowpoly" && lowpoly) {
+    try {
+      const r = lowpoly.createRenderer(c, viewport, canvas3d, { dayNight: () => prefs.dayNight !== false, lens: () => ui.lens, readOnly });
+      lowpoly.onQuality((msg) => toast("🧊 " + msg));
+      showLook(true);
+      return r;
+    } catch (e) {
+      console.warn(e);
+      prefs.look = "classic";
+      savePrefs();
+      toast("⚠️ The 3D look isn't supported on this device");
+    }
+  }
+  showLook(false);
+  return new CityRenderer(c);
+}
+
+function setRenderer(c) {
+  if (renderer) renderer.dispose();
+  renderer = makeRenderer(c);
+  ui.cars = [];
+}
+
+function showLook(is3d) {
+  canvas3d.hidden = !is3d;
+  document.body.classList.toggle("look-3d", is3d);
+  viewport.projector = is3d ? lowpoly.projector(viewport) : null;
+  $("#lensBtn").hidden = !is3d;
+  if (!is3d) setLens("normal");
+  else renderLens();
+}
+
+// Switches between the looks live, keeping the camera where it is.
+async function switchLook(look) {
+  prefs.look = look;
+  savePrefs();
+  if (look === "lowpoly") {
+    try {
+      await loadLowPoly();
+    } catch (e) {
+      console.warn(e);
+      prefs.look = "classic";
+      savePrefs();
+      toast("⚠️ Couldn't load the 3D look");
+    }
+  }
+  setRenderer(city);
+  if (visit) {
+    visit.renderer.dispose();
+    visit.renderer = makeRenderer(visit.city, true);
+  }
+}
+
+function setLens(id) {
+  ui.lens = id;
+  renderLens();
+}
+
+function renderLens() {
+  const lens = LENSES.find((l) => l.id === ui.lens) || LENSES[0];
+  $("#lensBtn").textContent = lens.icon;
+  const legend = $("#lensLegend");
+  legend.hidden = lens.id === "normal" || !document.body.classList.contains("look-3d");
+  legend.innerHTML = "<b>" + lens.icon + " " + lens.label + "</b>" + (lens.legend || []).map(([c, label]) =>
+    "<span>" + (c ? "<i style='background:" + c + "'></i>" : "") + label + "</span>").join("");
+}
+
+$("#lensBtn").addEventListener("click", () => {
+  const i = LENSES.findIndex((l) => l.id === ui.lens);
+  let next = LENSES[(i + 1) % LENSES.length];
+  // coverage lenses only once fire & police exist
+  while (LENS_COVERAGE[next.id] && (visit ? visit.city : city).tierReached < SAFETY_TIER) next = LENSES[(LENSES.indexOf(next) + 1) % LENSES.length];
+  setLens(next.id);
+  toast(next.icon + " " + next.label, 1200);
+  sfx.play("tap");
+});
+$("#lensLegend").addEventListener("click", () => setLens("normal"));
 
 // ---------------------------------------------------------------------------
 // Sheets
@@ -161,8 +335,9 @@ function updateTopbar() {
   };
   for (const [k, v] of Object.entries(vals)) {
     if (lastShown[k] !== v) {
-      if (lastShown[k] !== undefined && !visit && (k === "mat" || k === "coin") && parseFloat(v) > parseFloat(lastShown[k])) bump("#" + k + "Val");
-      $("#" + k + "Val").textContent = v;
+      const raw = !visit && (k === "mat" ? c.materials : k === "coin" ? c.coins : null);
+      if (raw != null && raw !== false && lastShown[k] !== undefined) countTo("#" + k + "Val", raw);
+      else $("#" + k + "Val").textContent = v;
       lastShown[k] = v;
     }
   }
@@ -210,6 +385,25 @@ function updateTopbar() {
   }
   $("#dailyBtn .dot").hidden = !city.dailyStatus().available;
   $("#itemsBtn .dot").hidden = !city.inventory.length;
+}
+
+// Counters roll up to their new value (and pop) instead of jumping.
+const counters = {};
+function countTo(sel, value) {
+  const c = counters[sel] || (counters[sel] = { shown: value, to: value, anim: 0 });
+  const up = value > c.to;
+  c.from = c.shown;
+  c.to = value;
+  c.t0 = performance.now();
+  if (up && value - c.from >= 1) bump(sel);
+  if (c.anim) return;
+  const step = (now) => {
+    const p = Math.min(1, (now - c.t0) / 450);
+    c.shown = c.from + (c.to - c.from) * (1 - (1 - p) ** 3);
+    $(sel).textContent = fmt(Math.max(0, c.shown));
+    c.anim = p < 1 ? requestAnimationFrame(step) : 0;
+  };
+  c.anim = requestAnimationFrame(step);
 }
 
 $("#tierBadge").addEventListener("click", openMilestones);
@@ -301,6 +495,7 @@ function handleEvents(events) {
   for (const e of events) {
     if (e.type === "road") {
       toast("🛣️ New road finished! " + e.lots + " new lots to build on");
+      sfx.play("road");
       buzz(40);
       saveGame();
     } else if (e.type === "roadChoice") {
@@ -309,6 +504,7 @@ function handleEvents(events) {
       saveGame();
     } else if (e.type === "tier") {
       const t = TIERS[e.tier];
+      sfx.play("fanfare");
       showModal({
         icon: t.icon,
         title: city.name + " is now a " + t.name + "!",
@@ -321,16 +517,17 @@ function handleEvents(events) {
     } else if (e.type === "incident") {
       const inc = e.inc, svc = SERVICES[inc.type];
       const what = inc.type === "fire" ? "🔥 Fire at a " + buildingName(inc.lot).slice(3) : "🦹 Robbery at a " + buildingName(inc.lot).slice(3);
+      sfx.play("alert");
       toast(city.stationFor(inc.lot, inc.type) ? what + " – " + svc.vehicle + " on the way!" : what + "! No " + svc.name.toLowerCase() + " covers it – tap it to call a crew", 3500);
       buzz([40, 60, 40]);
     } else if (e.type === "burned") {
-      floater(e.inc.lot.center, e.lost ? "🔥 Burned down" : "🔥 Lost a level", "#fca5a5");
+      floater(e.inc.lot, e.lost ? "🔥 Burned down" : "🔥 Lost a level", "#fca5a5");
       toast(e.lost ? "🔥 A building burned down. Fire stations stop this!" : "🔥 A building burned and lost a level", 3500);
       saveGame();
     } else if (e.type === "robbed") {
-      floater(e.inc.lot.center, "🦹 −" + e.stolen + " 💰", "#fca5a5");
+      floater(e.inc.lot, "🦹 −" + e.stolen + " 💰", "#fca5a5");
     } else if (e.type === "resolved") {
-      floater(e.inc.lot.center, e.inc.type === "fire" ? "✅ Fire's out!" : "✅ Robbers caught!", "#bbf7d0");
+      floater(e.inc.lot, e.inc.type === "fire" ? "✅ Fire's out!" : "✅ Robbers caught!", "#bbf7d0");
     } else if (e.type === "unpaid") {
       toast("⚠️ Out of 💰 for station upkeep – fire & police stopped responding", 4000);
     } else if (e.type === "paid") {
@@ -338,7 +535,8 @@ function handleEvents(events) {
     } else if (e.type === "built" && !visit) {
       const b = e.lot;
       const label = KIND_ICONS[b.kind] || SERVICES[b.special]?.icon || SPECIALS[b.special]?.icon || "✨";
-      floater(b.center, label + " built!", "#bbf7d0");
+      floater(b, label + " built!", "#bbf7d0");
+      sfx.play("build");
     }
   }
 }
@@ -346,27 +544,22 @@ function handleEvents(events) {
 // ---------------------------------------------------------------------------
 // Tapping the map
 // ---------------------------------------------------------------------------
-function onTap(world) {
+function onTap(world, screen) {
   const active = visit || { city, renderer };
-  const vp = viewport.getViewPoint();
   const z = viewport.zoom;
+  sfx.unlock();
 
   if (!visit && !ui.placing && !ui.placeStation) {
-    for (const inc of city.incidents) {
-      if (distance(renderer.incidentAnchor(inc.lot, vp), world) < 36 * Math.max(1, z * 0.75)) return openLotSheet(inc.lot, false);
-    }
-    for (const lot of city.lots) {
-      if (!city.bagReady(lot)) continue;
-      if (distance(renderer.bubbleAnchor(lot, vp), world) < 34 * Math.max(1, z * 0.75)) return collect(lot);
-    }
+    const hit = renderer.pickMarker(world, screen, z);
+    if (hit) return hit.incident ? openLotSheet(hit.lot, false) : collect(hit.lot);
   }
 
   if (!visit && !ui.placing && city.roadChoice) {
-    const i = renderer.choiceAt(world, z);
+    const i = renderer.choiceAt(world, z, screen);
     if (i >= 0) return startRoadPick(i);
   }
 
-  const lot = active.city.lots.find((l) => l.poly.containsPoint(world));
+  const lot = active.renderer.lotAt(world, screen);
   if (ui.placeStation) {
     if (!lot) return toast("Tap an empty lot, or a building to replace");
     if (lot.kind === "special" || lot.kind === "svc") return toast("Pick a lot without a special building or station");
@@ -386,9 +579,13 @@ function onTap(world) {
 }
 
 function collect(lot) {
+  const goods = lot.kind === "ind";
   const got = city.collect(lot);
   if (got) {
-    floater(renderer.bubbleAnchor(lot, viewport.getViewPoint()), "+" + got + (lot.kind === "ind" ? " 🧱" : " 💰"));
+    const from = renderer.anchor(lot);
+    floater(from, "+" + got + (goods ? " 🧱" : " 💰"));
+    flyCoins(viewport.toScreen(from), goods ? "#matVal" : "#coinVal", goods ? "🧱" : "💰", got);
+    sfx.play("coin");
     buzz(15);
   }
 }
@@ -398,7 +595,7 @@ function placeSpecial(lot) {
   const stored = lot.kind === "com" || lot.kind === "ind" ? Math.floor(lot.coins) : 0;
   const unit = lot.kind === "ind" ? " 🧱" : " 💰";
   if (!city.placeSpecial(lot, id)) return;
-  floater(lot.center, SPECIALS[id].icon + (SPECIALS[id].station ? " level-2 station!" : " placed!"), "#fde68a");
+  floater(lot, SPECIALS[id].icon + (SPECIALS[id].station ? " level-2 station!" : " placed!"), "#fde68a");
   if (stored > 0) toast("Collected +" + stored + unit + " first");
   buzz(40);
   stopPlacing();
@@ -427,6 +624,15 @@ function confirmReplace(lot) {
   });
 }
 
+// Glides the camera so a lot isn't hidden under the sheet that opens for it.
+function revealLot(lot) {
+  const p = viewport.toScreen(lot.center);
+  const want = viewport.height * 0.3;
+  if (p.y < viewport.height * 0.42 && p.y > 90) return;
+  const shift = viewport.toWorldVector(new Point(p.x - viewport.width / 2, p.y - want));
+  ui.focus = { at: subtract(viewport.offset, shift), zoom: viewport.zoom };
+}
+
 const KIND_ICONS = { res: "🏠", com: "🏪", ind: "🏭" };
 const BUILDING_NAMES = {
   res: ["", "Cottage", "Townhouse", "Apartments"],
@@ -439,6 +645,7 @@ function buildingName(lot, lvl = Math.max(1, lot.effectiveLevel)) {
 
 function openLotSheet(lot, readOnly) {
   ui.selected = lot;
+  revealLot(lot);
   const c = readOnly ? visit.city : city;
   let title, html;
   if (lot.kind === "svc") return openStationSheet(lot, readOnly);
@@ -500,7 +707,7 @@ function openLotSheet(lot, readOnly) {
       back.addEventListener("click", () => {
         const icon = SPECIALS[lot.special].icon;
         if (city.removeSpecial(lot)) {
-          floater(lot.center, icon + " back in the bag", "#fde68a");
+          floater(lot, icon + " back in the bag", "#fde68a");
           buzz(30);
           saveGame();
           closeSheet();
@@ -511,7 +718,8 @@ function openLotSheet(lot, readOnly) {
     if (btn) {
       btn.addEventListener("click", () => {
         if (city.upgrade(lot)) {
-          floater(lot.center, "⬆️ Upgrading!", "#fde68a");
+          floater(lot, "⬆️ Upgrading!", "#fde68a");
+          sfx.play("upgrade");
           buzz(40);
           saveGame();
           closeSheet();
@@ -585,6 +793,8 @@ function handleScan(text, format = "qr_code") {
     return;
   }
   city.applyReward(r);
+  sfx.unlock();
+  sfx.play("reward");
   saveGame();
   let gains = "";
   if (r.materials) gains += "<span class='gain'>+" + r.materials + " 🧱</span>";
@@ -1005,7 +1215,7 @@ async function offerCloudTown(ask) {
   }
   try {
     city = City.fromSave(r);
-    renderer = new CityRenderer(city);
+    setRenderer(city);
     ui.cars = [];
     saveGame();
     catchUp();
@@ -1020,7 +1230,8 @@ async function offerCloudTown(ask) {
 function startVisit(code) {
   try {
     const other = City.fromShareCode(decodeURIComponent(code));
-    visit = { city: other, renderer: new CityRenderer(other) };
+    if (visit) visit.renderer.dispose();
+    visit = { city: other, renderer: makeRenderer(other, true) };
     ui.cars = [];
     closeSheet();
     stopPlacing();
@@ -1038,6 +1249,7 @@ function startVisit(code) {
 }
 
 function endVisit() {
+  if (visit) visit.renderer.dispose();
   visit = null;
   ui.cars = [];
   $("#visitBanner").hidden = true;
@@ -1072,7 +1284,15 @@ function openSettings() {
       "<button id='xTrain'>🧠 Train self-driving cars</button>" +
       "</div></div>"
     : "";
+  const toggle = (id, label, on, hint = "") =>
+    "<label class='toggle-row' for='" + id + "'><span class='grow'>" + label + (hint ? "<small>" + hint + "</small>" : "") + "</span>" +
+    "<input type='checkbox' id='" + id + "'" + (on ? " checked" : "") + "><i class='switch'></i></label>";
   const html =
+    "<div class='card look-card'><h3>🎨 Look &amp; feel</h3>" +
+    toggle("sLook", "🧊 New 3D look <span class='beta'>beta</span>", prefs.look === "lowpoly", "Try it out – switch back any time") +
+    (prefs.look === "lowpoly" ? toggle("sDayNight", "🌗 Day &amp; night", prefs.dayNight !== false, "The sun follows your clock") : "") +
+    toggle("sSounds", "🔊 Sounds", prefs.sounds !== false) +
+    "</div>" +
     "<div class='btn-col'>" +
     "<button id='sRename'>✏️ Rename town</button>" +
     "<button id='sExport'>💾 Back up my town</button>" +
@@ -1083,6 +1303,24 @@ function openSettings() {
     "</div>" + extras +
     "<div class='version' id='versionLabel'>Virtual World v" + VERSION + "</div>";
   openSheet("⚙️ Settings", html, (body) => {
+    body.querySelector("#sLook").addEventListener("change", async (e) => {
+      await switchLook(e.target.checked ? "lowpoly" : "classic");
+      toast(prefs.look === "lowpoly" ? "🧊 Welcome to the 3D look! Twist with two fingers to rotate" : "🖼️ Back to the classic look");
+      openSettings();
+    });
+    const dn = body.querySelector("#sDayNight");
+    if (dn) dn.addEventListener("change", (e) => {
+      prefs.dayNight = e.target.checked;
+      savePrefs();
+    });
+    body.querySelector("#sSounds").addEventListener("change", (e) => {
+      prefs.sounds = e.target.checked;
+      savePrefs();
+      if (prefs.sounds) {
+        sfx.unlock();
+        sfx.play("coin");
+      }
+    });
     body.querySelector("#sRename").addEventListener("click", () => $("#cityName").click());
     body.querySelector("#sHelp").addEventListener("click", () => {
       closeSheet();
@@ -1106,7 +1344,7 @@ function openSettings() {
       if (!data) return;
       try {
         city = City.fromSave(JSON.parse(data));
-        renderer = new CityRenderer(city);
+        setRenderer(city);
         ui.cars = [];
         saveGame();
         syncOnline(true);
@@ -1123,7 +1361,7 @@ function openSettings() {
       closeSheet();
       openMapPicker((map, seed) => {
         city = City.create(seed, map);
-        renderer = new CityRenderer(city);
+        setRenderer(city);
         ui.cars = [];
         saveGame();
         syncOnline(true);
@@ -1366,7 +1604,7 @@ function hireCollector() {
       c.kept += keep;
       c.fee += amount - keep;
     }
-    floater(renderer.bubbleAnchor(lot, viewport.getViewPoint()), "+" + keep + (goods ? " 🧱" : " 💰"));
+    floater(renderer.anchor(lot), "+" + keep + (goods ? " 🧱" : " 💰"));
   };
   const starts = city.tier >= TWO_TRUCK_TIER ? townEnds() : [null];
   c.trucks = starts.map((start) => new CollectorTruck(city.layout.graph, c.pool, onCollect, start));
@@ -1502,7 +1740,7 @@ function confirmStation(lot) {
   openSheet(svc.icon + " Build here?", html, (body) => {
     body.querySelector("#stationBtn").addEventListener("click", () => {
       if (!city.buildStation(lot, kind)) return toast("Not enough coins");
-      floater(lot.center, svc.icon + " Station coming!", "#fde68a");
+      floater(lot, svc.icon + " Station coming!", "#fde68a");
       buzz(40);
       stopPlacing();
       saveGame();
@@ -1536,7 +1774,7 @@ function openStationSheet(lot, readOnly) {
     const up = body.querySelector("#upgradeBtn");
     if (up) up.addEventListener("click", () => {
       if (!city.upgradeStation(lot)) return;
-      floater(lot.center, "⬆️ Upgrading!", "#fde68a");
+      floater(lot, "⬆️ Upgrading!", "#fde68a");
       buzz(40);
       saveGame();
       closeSheet();
@@ -1684,13 +1922,14 @@ function loop(now) {
   for (const f of ui.floaters) f.age += dt;
   ui.floaters = ui.floaters.filter((f) => f.age < f.life);
 
-  viewport.reset("#3f8f3a");
+  touch.update();
+  if (!active.renderer.is3d) viewport.reset("#3f8f3a");
   active.renderer.draw(ctx, viewport, {
     placing: !!(ui.placing || ui.placeStation),
     roadPick: ui.roadPick ?? -1,
     selected: ui.selected,
     cars: visit ? ui.cars : [...ui.cars, ...ui.responders, ...(ui.collector ? ui.collector.trucks : [])],
-    coverage: visit ? null : ui.placeStation || (ui.selected && ui.selected.kind === "svc" ? ui.selected.special : null) || ui.showCoverage,
+    coverage: visit ? null : ui.placeStation || (ui.selected && ui.selected.kind === "svc" ? ui.selected.special : null) || ui.showCoverage || (LENS_COVERAGE[ui.lens] && active.renderer.is3d ? ui.lens : null),
     player: ui.drive,
     floaters: ui.floaters,
     now,
@@ -1762,7 +2001,14 @@ function catchUp() {
 // Boot
 // ---------------------------------------------------------------------------
 // A brand new player first picks the land their town grows on.
-(function boot() {
+(async function boot() {
+  if (prefs.look === "lowpoly") {
+    try {
+      await loadLowPoly();
+    } catch (e) {
+      console.warn("3D look failed to load", e);
+    }
+  }
   const saved = readJSON(SAVE_KEY, null);
   if (saved) {
     try {
@@ -1779,8 +2025,11 @@ function catchUp() {
 })();
 
 function start(fresh) {
-  renderer = new CityRenderer(city);
+  setRenderer(city);
   viewport.lookAt(city.center());
+  // a little swoop in when the town opens
+  ui.focus = { at: viewport.offset, zoom: viewport.zoom };
+  viewport.zoom = Math.min(viewport.maxZoom, viewport.zoom * 2.2);
   if (fresh) {
     saveGame();
     showWelcome(true);

@@ -8,6 +8,7 @@ class TouchCamera {
     this.onPan = onPan;
     this.pointers = new Map();
     this.gesture = null;
+    this.velocity = null; // world units per frame, after a flick
     this.canvas.style.touchAction = "none";
 
     this.canvas.addEventListener("pointerdown", (e) => this.#down(e));
@@ -47,6 +48,7 @@ class TouchCamera {
 
   #down(e) {
     if (e.button !== 0 && e.pointerType === "mouse") return;
+    this.velocity = null;
     this.canvas.setPointerCapture(e.pointerId);
     this.pointers.set(e.pointerId, this.#local(e));
     if (this.pointers.size === 1) this.gesture = null;
@@ -65,7 +67,13 @@ class TouchCamera {
         g.moved = true;
         this.onPan();
       }
-      if (g.moved) v.offset = add(g.offset, v.toWorldVector(d));
+      if (g.moved) {
+        v.offset = add(g.offset, v.toWorldVector(d));
+        // remember the recent motion for a little glide after letting go
+        const now = performance.now();
+        g.trail = (g.trail || []).filter((s) => now - s.t < 100);
+        g.trail.push({ t: now, p: pts[0] });
+      }
     } else if (g.type === "pinch" && pts.length >= 2) {
       const mid = average(pts[0], pts[1]);
       v.zoom = clamp((g.zoom * g.dist) / Math.max(10, distance(pts[0], pts[1])), v.minZoom, v.maxZoom);
@@ -83,6 +91,14 @@ class TouchCamera {
     }
   }
 
+  // Called every frame: the map keeps gliding after a flick, slowing down.
+  update() {
+    if (!this.velocity) return;
+    this.viewport.offset = add(this.viewport.offset, this.velocity);
+    this.velocity = scale(this.velocity, 0.9);
+    if (magnitude(this.velocity) < 0.3 * this.viewport.zoom) this.velocity = null;
+  }
+
   #up(e, cancelled = false) {
     if (!this.pointers.has(e.pointerId)) return;
     const g = this.gesture;
@@ -90,6 +106,15 @@ class TouchCamera {
     this.pointers.delete(e.pointerId);
     if (!cancelled && this.pointers.size === 0 && g && g.type === "pan" && !g.moved && performance.now() - g.t < 500) {
       this.onTap(this.toWorld(pos), pos);
+    }
+    if (!cancelled && this.pointers.size === 0 && g && g.type === "pan" && g.moved && g.trail && g.trail.length > 1) {
+      const a = g.trail[0], b = g.trail[g.trail.length - 1];
+      const ms = Math.max(16, b.t - a.t);
+      if (performance.now() - b.t < 60) {
+        let px = scale(subtract(b.p, a.p), 16 / ms); // screen pixels per frame
+        if (magnitude(px) > 40) px = scale(normalize(px), 40);
+        if (magnitude(px) > 2) this.velocity = this.viewport.toWorldVector(px);
+      }
     }
     if (this.pointers.size > 0) {
       const moved = true;

@@ -6,6 +6,17 @@
 
 const CHANGELOG = [
   {
+    version: "0.12.0",
+    notes: [
+      "🧊 Try the new 3D look! Turn it on in ⚙️ Settings → Look & feel, and switch back any time. Tell us which one you like better",
+      "🏙️ In 3D every home, shop and factory has its own shape per level, with sunshine, shadows, rivers, bridges and snowy mountains",
+      "🔍 New map views (3D look): tap 🗺️ to color your town by zone or by level, or see where fire and police reach",
+      "⬆️ Little badges show each building's level, and a green arrow means you can upgrade it right now",
+      "🌗 Day and night follow your clock in 3D: windows and street lamps light up after dark",
+      "✨ A fresh, cleaner look for menus and buttons, coins that fly to your wallet, and optional sounds (⚙️ Settings)",
+    ],
+  },
+  {
     version: "0.11.0",
     notes: [
       "🚒🚓 Fire & police! From Town on, 🔥 fires and 🦹 robberies break out while you play. Build stations (tap 🛡️ at the top) and their trucks and cars race to help",
