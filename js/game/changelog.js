@@ -6,6 +6,13 @@
 
 const CHANGELOG = [
   {
+    version: "0.14.1",
+    notes: [
+      "🔢 The top bar fits on every phone again: big numbers are shortened (1.2K, 45.6M) instead of cut off",
+      "👥 The population chip shows how full your homes are with a little bar (orange when full). Tap it for the exact numbers",
+    ],
+  },
+  {
     version: "0.14.0",
     notes: [
       "🚗 Your residents now have real days! Cars pull out of homes, drive to work, run errands and head home, following your phone's clock",

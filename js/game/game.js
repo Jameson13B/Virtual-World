@@ -6,7 +6,7 @@
 const $ = (sel) => document.querySelector(sel);
 const SAVE_KEY = "vw.city";
 const PREFS_KEY = "vw.gamePrefs";
-const VERSION = "0.14.0";
+const VERSION = "0.14.1";
 
 const canvas = $("#cityCanvas");
 const ctx = canvas.getContext("2d");
@@ -56,10 +56,11 @@ function saveGame() {
 }
 
 // 9999, 12.3K, 123K, 1.2M, 45.6M, 2.0B. Rolls over to the next unit instead
-// of showing "1000K".
+// of showing "1000K". `from` is where the units start: the top bar's narrow
+// chips start at 1000 (999, 1.2K).
 const FMT_UNITS = [[1e3, "K"], [1e6, "M"], [1e9, "B"]];
-const fmt = (n) => {
-  if (n < 10000) return String(Math.floor(n));
+const fmt = (n, from = 10000) => {
+  if (n < from) return String(Math.floor(n));
   for (const [size, suffix] of FMT_UNITS) {
     const v = n / size;
     const s = v.toFixed(v >= 99.95 ? 0 : 1);
@@ -328,10 +329,10 @@ let lastShown = {};
 function updateTopbar() {
   const c = visit ? visit.city : city;
   const vals = {
-    mat: visit ? "–" : fmt(c.materials),
-    coin: visit ? "–" : fmt(c.coins),
-    pop: fmt(c.pop) + (visit ? "" : "/" + fmt(c.capacity)),
-    appeal: c.appeal.toFixed(2),
+    mat: visit ? "–" : chipNum(c.materials),
+    coin: visit ? "–" : chipNum(c.coins),
+    pop: chipNum(c.pop),
+    appeal: c.appeal.toFixed(c.appeal < 10 ? 2 : 1),
   };
   for (const [k, v] of Object.entries(vals)) {
     if (lastShown[k] !== v) {
@@ -341,6 +342,10 @@ function updateTopbar() {
       lastShown[k] = v;
     }
   }
+  // How full the town's homes are, as a bar along the bottom of the 👥 chip.
+  const popChip = $("#popChip");
+  popChip.style.setProperty("--fill", clamp(c.pop / Math.max(1, c.capacity), 0, 1));
+  popChip.classList.toggle("full", c.capacity > 0 && c.pop >= c.capacity);
   $("#cityName").textContent = c.name;
   const tier = TIERS[c.tier];
   $("#tierBadge").textContent = tier.icon + " " + tier.name;
@@ -392,6 +397,8 @@ function updateTopbar() {
 
 // Counters roll up to their new value (and pop) instead of jumping.
 const counters = {};
+const chipNum = (n) => fmt(n, 1000);
+
 function countTo(sel, value) {
   const c = counters[sel] || (counters[sel] = { shown: value, to: value, anim: 0 });
   const up = value > c.to;
@@ -403,7 +410,7 @@ function countTo(sel, value) {
   const step = (now) => {
     const p = Math.min(1, (now - c.t0) / 450);
     c.shown = c.from + (c.to - c.from) * (1 - (1 - p) ** 3);
-    $(sel).textContent = fmt(Math.max(0, c.shown));
+    $(sel).textContent = chipNum(Math.max(0, c.shown));
     c.anim = p < 1 ? requestAnimationFrame(step) : 0;
   };
   c.anim = requestAnimationFrame(step);
@@ -427,6 +434,12 @@ $("#compassBtn").addEventListener("click", () => {
   ui.unrotate = true;
 });
 $("#appealChip").addEventListener("click", openAppeal);
+// The chip only has room for the head count; tap it for the full picture.
+$("#popChip").addEventListener("click", () => {
+  const c = visit ? visit.city : city;
+  const full = c.pop >= c.capacity;
+  toast("👥 " + Math.floor(c.pop).toLocaleString() + " people · homes for " + c.capacity.toLocaleString() + (full ? " – full, build more 🏠" : ""), 2500);
+});
 $("#safetyChip").addEventListener("click", () => visit || openSafety());
 
 // Every tier, with progress toward the next one.
