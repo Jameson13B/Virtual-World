@@ -26,7 +26,7 @@ Its roads, buildings and rendering engine come from freeCodeCamp's
 - **Rare drops:** parks, fountains, schools, clinics, fire stations, libraries, a Sky Tower, a stadium and a Ferris wheel. Place them on an empty lot, or on top of a home, shop or factory to replace it, to raise ✨ appeal, which makes the town grow faster. A placed special can go back in the bag at any time.
 - **Factories:** from Town (40 people) on, about 1 in 4 job buildings is a 🏭 factory. Factories fill up with 🧱 and show a 📦 crate to tap, a small boost on top of scanning.
 - **Tiers:** Hamlet → Village (10 people) → Town (40) → City (120) → Metropolis (400) → Megalopolis (1,000) → Metroplex (2,500) → Capital (5,000) → Global City (10,000).
-- **Offline progress:** the town keeps growing for up to 1 hour while the app is closed.
+- **Offline progress:** the town keeps working for 15 minutes after the player's last tap, open or closed, then rests until they're back.
 - **Social:** your town's name is your username, so you're on the 🏆 world leaderboard automatically. Add friends and visit anyone's town by name or link (read-only). If two towns share a name, the newer one gets a number added (oakstead2). Each scan also tells you how many explorers have found that code before you.
 - **Cloud save:** every player gets a silent account, so progress backs up automatically. Adding an email makes the town recoverable on a new phone.
 - **Two looks:** the classic top-down map, or the new low-poly 3D look (beta) with map views by zone, level and fire/police coverage, level badges and day & night. Switch in ⚙️ Settings → Look & feel; the choice is saved per device.

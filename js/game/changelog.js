@@ -6,6 +6,12 @@
 
 const CHANGELOG = [
   {
+    version: "0.13.1",
+    notes: [
+      "💤 Your town now rests 15 minutes after your last tap (was 1 hour) – it grows when you're playing",
+    ],
+  },
+  {
     version: "0.13.0",
     notes: [
       "🏗️ You decide where your town builds! New homes, shops and factories now land in 🎒 Items instead of building themselves",

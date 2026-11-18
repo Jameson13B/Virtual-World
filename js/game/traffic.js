@@ -27,14 +27,17 @@ class TownCar extends Car {
     this.spawn();
   }
 
-  spawn(seg = null) {
+  // Puts the car on `seg` (else a random road), at the point `at` if given,
+  // facing the end nearest `toward` if given.
+  spawn(seg = null, at = null, toward = null) {
     const segs = this.graph.segments;
     if (!segs.length) return;
     seg = seg || segs[Math.floor(Math.random() * segs.length)];
-    const [a, b] = Math.random() < 0.5 ? [seg.p1, seg.p2] : [seg.p2, seg.p1];
+    const flip = toward ? distance(seg.p1, toward) < distance(seg.p2, toward) : Math.random() < 0.5;
+    const [a, b] = flip ? [seg.p2, seg.p1] : [seg.p1, seg.p2];
     this.#build([a, ...this.#route(a, b)]);
     const len = distance(a, b);
-    this.s = len * (0.15 + Math.random() * 0.5);
+    this.s = at ? clamp(dot(subtract(at, a), normalize(subtract(b, a))), 0, len) : len * (0.15 + Math.random() * 0.5);
     this.speed = 0;
     this.#place();
   }

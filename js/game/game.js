@@ -6,7 +6,7 @@
 const $ = (sel) => document.querySelector(sel);
 const SAVE_KEY = "vw.city";
 const PREFS_KEY = "vw.gamePrefs";
-const VERSION = "0.13.0";
+const VERSION = "0.13.1";
 
 const canvas = $("#cityCanvas");
 const ctx = canvas.getContext("2d");
@@ -2071,7 +2071,7 @@ function loop(now) {
     if (Math.abs(viewport.angle) < 0.005) [viewport.angle, ui.unrotate] = [0, false];
   }
 
-  // The town runs while you're here and for an hour after your last tap.
+  // The town runs while you're here and for 15 minutes after your last tap.
   if (Date.now() - city.lastActive < ACTIVE_GRACE) {
     handleEvents(city.tick(dt));
     if (!visit) {
@@ -2135,7 +2135,7 @@ document.addEventListener("visibilitychange", () => {
 });
 window.addEventListener("pagehide", saveGame);
 
-// Any touch or key counts as being here. After an hour without one the town
+// Any touch or key counts as being here. After 15 minutes without one the town
 // rests, even with the app left open.
 function markActive() {
   if (!city) return;
@@ -2147,7 +2147,7 @@ function markActive() {
 }
 for (const ev of ["pointerdown", "keydown", "wheel"]) addEventListener(ev, markActive, { capture: true, passive: true });
 
-// Progress made while the app was closed: only up to an hour after your last tap.
+// Progress made while the app was closed: only up to 15 minutes after your last tap.
 function catchUp() {
   if (!city) return; // still choosing a map
   const now = Date.now();

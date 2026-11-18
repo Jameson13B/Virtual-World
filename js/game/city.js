@@ -50,7 +50,7 @@ const UPKEEP_SHARE = 0.2; // full level-1 coverage of both kinds costs 20% of in
 const INCIDENT_TIME = { fire: 60, police: 120 }; // seconds until a fire burns / robbers escape
 const SAFETY_GRACE = 600; // seconds of play before the first emergency
 // The town only runs while the player is around, and for this long after their last tap.
-const ACTIVE_GRACE = 3600 * 1000;
+const ACTIVE_GRACE = 15 * 60 * 1000;
 
 // Factories start appearing at Town, as about 1 in 4 of the job buildings.
 const INDUSTRY_TIER = 2;
