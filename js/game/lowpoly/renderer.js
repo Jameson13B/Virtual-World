@@ -595,7 +595,7 @@ export class LowPolyRenderer {
         [fill, edge] = [pale(c), c];
       }
       if (stations && ["res", "com", "ind"].includes(lot.kind) && !stations.some((st) => City.covers(st, lot))) fill = edge = "#f87171";
-      if (placing && (!lot.kind || (lot.kind !== "special" && lot.kind !== "svc"))) {
+      if (placing && (!lot.kind || (placing !== "empty" && lot.kind !== "special" && lot.kind !== "svc"))) {
         edge = pulse > 0.5 ? "#facc15" : "#fde68a";
         if (!lot.kind) fill = pulse > 0.5 ? "#fde047" : "#fef08a";
       }

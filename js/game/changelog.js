@@ -6,6 +6,14 @@
 
 const CHANGELOG = [
   {
+    version: "0.13.0",
+    notes: [
+      "🏗️ You decide where your town builds! New homes, shops and factories now land in 🎒 Items instead of building themselves",
+      "🟩 Tap any empty lot to pick what goes there, or place them from 🎒 – your town still decides what it needs",
+      "✨ In a hurry? \"Place them all for me\" in 🎒 builds everything on random empty lots",
+    ],
+  },
+  {
     version: "0.12.1",
     notes: [
       "💬 Tell us what you think! ⚙️ Settings → 💬 Send feedback: pick your favorite look, rate the game and leave a note",

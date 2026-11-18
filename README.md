@@ -14,13 +14,15 @@ Its roads, buildings and rendering engine come from freeCodeCamp's
         ↓  🧱 materials
 🛣️ pick your next road from 2 options (3 from City); each player's road network is unique
         ↓  new empty lots
-🏠 homes, 🏪 shops and 🏭 factories develop by demand (homes need jobs, shops need customers)
-        ↓
+🎒 the town sends the 🏠 homes, 🏪 shops and 🏭 factories it needs (homes need jobs, shops need customers)
+        ↓  you pick the empty lot for each one
+🏗️ buildings go up
 👥 people move in → 💰 taxes + shop income, 🧱 from factories → ⬆️ upgrades → bigger tiers
 ```
 
 - **Maps:** a new town starts by picking its land: 🌲 Woodland, 🏖️ Beach, 🏞️ Grand River, ⛰️ Mountains, 🌊 Great Bay, 🛶 Lake Country or 🏝️ Islands. Each card previews the exact map you'll get, and 🎲 deals new ones, so two towns of the same type never match. Roads and lots stay on dry land, but a road can bridge up to 600 units of water and tunnel through up to 400 of rock. Towns from before maps existed stay on the classic flat forest.
 - **Scanning:** what a code is for decides the reward. Wi-Fi codes give power and coins, contact cards bring families, product barcodes bring goods, and restaurant menus, parking meters, museums and social links each have their own flavor. The exact contents of a code decide the amounts and the rare drops, so the same sticker gives every player the same reward. Each code counts once per town, and URLs ignore `?query` strings so one restaurant's 30 table codes count as one.
+- **Building:** empty lots don't build themselves. At the pace lots used to develop, the town adds whatever demand calls for to the bag (`City.plots`), never more than there are empty lots, and the player places each one by tapping an empty lot or from 🎒 Items ("Place them all for me" scatters them at random).
 - **Rare drops:** parks, fountains, schools, clinics, fire stations, libraries, a Sky Tower, a stadium and a Ferris wheel. Place them on an empty lot, or on top of a home, shop or factory to replace it, to raise ✨ appeal, which makes the town grow faster. A placed special can go back in the bag at any time.
 - **Factories:** from Town (40 people) on, about 1 in 4 job buildings is a 🏭 factory. Factories fill up with 🧱 and show a 📦 crate to tap, a small boost on top of scanning.
 - **Tiers:** Hamlet → Village (10 people) → Town (40) → City (120) → Metropolis (400) → Megalopolis (1,000) → Metroplex (2,500) → Capital (5,000) → Global City (10,000).
@@ -120,6 +122,6 @@ Players can add feedback but can't read anyone's, including their own.
 
 ### Tuning
 
-- **Pacing:** `City.roadCost()`, `#develop()` (demand formulas), `tick()` (growth rates, shop income), `factoryRate()` and `INDUSTRY_SHARE` (factories), and the `TIERS` and `SPECIALS` tables in `js/game/city.js`.
+- **Pacing:** `City.roadCost()`, `#demand()` (demand formulas), `tick()` (growth rates, shop income), `factoryRate()` and `INDUSTRY_SHARE` (factories), and the `TIERS` and `SPECIALS` tables in `js/game/city.js`.
 - **Maps:** the `TERRAIN_SHAPES` height functions, `BRIDGE_MAX` / `TUNNEL_MAX` and the `TERRAIN_COLORS` in `js/game/terrain.js`. Changing a shape moves the land under existing towns of that type, so add a new type instead.
 - **Rewards:** the `SCAN_KINDS` and `URL_FLAVORS` tables in `js/game/rewards.js`.

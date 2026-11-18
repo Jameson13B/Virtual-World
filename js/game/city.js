@@ -3,7 +3,8 @@
 //
 //   🧱 materials  -> when you can afford a road, you pick where it goes
 //   new roads     -> new empty lots
-//   empty lots    -> develop on their own into homes 🏠, shops 🏪 or factories 🏭
+//   empty lots    -> the town sends the homes 🏠, shops 🏪 or factories 🏭 it
+//                    needs to the bag, and the player picks where each goes
 //   homes         -> room for people 👥     shops -> jobs + 💰 to collect
 //                                            factories -> jobs + 🧱 to collect
 //   specials      -> parks, schools, towers… raise ✨ appeal (faster growth)
@@ -93,6 +94,7 @@ class City {
     this.roadJob = null;
     this.roadChoice = null; // roads waiting for the player to pick one
     this.inventory = [];
+    this.plots = { res: 0, com: 0, ind: 0 }; // buildings in the bag, waiting for a lot
     this.scanned = {};
     this.daily = { last: null, streak: 0 };
     this.market = { day: null, bought: 0 }; // materials bought this restock (`day` is the restock key)
@@ -124,6 +126,15 @@ class City {
   // ---- derived values ----------------------------------------------------
   get lots() {
     return this.layout.lots;
+  }
+
+  get plotCount() {
+    return this.plots.res + this.plots.com + this.plots.ind;
+  }
+
+  // Empty lots with nothing being built on them.
+  openLots() {
+    return this.lots.filter((l) => !l.kind && l.building <= 0);
   }
 
   get capacity() {
@@ -280,7 +291,7 @@ class City {
     return true;
   }
 
-  // Closes a station for good (no refund). The lot develops again by demand.
+  // Closes a station for good (no refund). The lot is empty again.
   closeStation(lot) {
     if (!lot || lot.kind !== "svc") return false;
     Object.assign(lot, { kind: null, special: null, level: 0, building: 0, coins: 0 });
@@ -472,12 +483,18 @@ class City {
       }
     }
 
-    // Empty lots develop on their own (about one per 40 s per lot, faster with appeal).
-    let expected = dt * 0.025 * appeal * empties.length;
-    while (expected > 0 && empties.length) {
+    // The town decides what its empty lots need (about one building per 40 s
+    // per lot, faster with appeal) and sends it to the bag for the player to
+    // place. There's never more in the bag than empty lots to put it on.
+    let open = empties.length - this.plotCount;
+    let expected = dt * 0.025 * appeal * Math.max(0, open);
+    while (expected > 0 && open > 0) {
       if (rand() < Math.min(1, expected)) {
-        const i = Math.floor(rand() * empties.length);
-        if (this.#develop(empties[i], rand)) empties.splice(i, 1);
+        const kind = this.#demand();
+        if (!kind) break;
+        this.plots[kind]++;
+        open--;
+        events.push({ type: "plot", kind });
       }
       expected -= 1;
     }
@@ -513,9 +530,10 @@ class City {
     return events;
   }
 
-  // Homes vs shops is decided by demand: homes need jobs nearby, shops need customers.
-  #develop(lot, rand) {
-    let cap = 0, jobs = 0;
+  // Homes vs shops is decided by demand: homes need jobs nearby, shops need
+  // customers. Buildings waiting in the bag count as if they were built.
+  #demand() {
+    let cap = this.plots.res * 6, jobs = (this.plots.com + this.plots.ind) * 5;
     for (const l of this.lots) {
       if (l.kind === "res") cap += Math.max(1, l.level) * 6;
       if (l.kind === "com" || l.kind === "ind") jobs += Math.max(1, l.level) * 5;
@@ -524,16 +542,13 @@ class City {
     // 2.2 × 0.6 > 1, homes and shops keep leapfrogging instead of stalling.
     const resDemand = jobs * 2.2 + 10 - cap;
     const comDemand = this.pop * 0.6 + 3 - jobs;
-    if (resDemand <= 0 && comDemand <= 0) return false;
-    lot.kind = resDemand >= comDemand ? "res" : this.#wantsFactory() ? "ind" : "com";
-    lot.level = 1;
-    lot.building = 10 + rand() * 10;
-    return true;
+    if (resDemand <= 0 && comDemand <= 0) return null;
+    return resDemand >= comDemand ? "res" : this.#wantsFactory() ? "ind" : "com";
   }
 
   #wantsFactory() {
     if (this.tierReached < INDUSTRY_TIER) return false;
-    let shops = 0, factories = 0;
+    let shops = this.plots.com, factories = this.plots.ind;
     for (const l of this.lots) {
       if (l.kind === "com") shops++;
       else if (l.kind === "ind") factories++;
@@ -543,7 +558,7 @@ class City {
 
   // Fast-forwards time (offline progress). Returns a summary of what changed.
   simulate(seconds) {
-    const before = { pop: this.pop, coins: this.coins, roads: this.roadCount, built: this.lots.filter((l) => l.kind).length };
+    const before = { pop: this.pop, coins: this.coins, roads: this.roadCount, plots: this.plotCount };
     const upkeep = this.upkeepRate() * seconds;
     const step = seconds > 3600 ? 2 : 1;
     for (let s = 0; s < seconds; s += step) this.tick(step);
@@ -551,7 +566,7 @@ class City {
       pop: Math.floor(this.pop) - Math.floor(before.pop),
       coins: Math.floor(this.coins - before.coins),
       roads: this.roadCount - before.roads,
-      built: this.lots.filter((l) => l.kind).length - before.built,
+      plots: Math.max(0, this.plotCount - before.plots),
       upkeep: Math.floor(upkeep),
     };
   }
@@ -566,6 +581,27 @@ class City {
     this.roadChoice = null;
     this.version++;
     return true;
+  }
+
+  // Builds a home, shop or factory from the bag on an empty lot.
+  placeBuilding(lot, kind, rand = Math.random) {
+    if (!lot || lot.kind || lot.building > 0 || !(this.plots[kind] > 0)) return false;
+    this.plots[kind]--;
+    Object.assign(lot, { kind, special: null, level: 1, building: 10 + rand() * 10, coins: 0 });
+    return true;
+  }
+
+  // Puts every building in the bag on a random empty lot. Returns how many.
+  placeAll(rand = Math.random) {
+    const open = this.openLots();
+    let n = 0;
+    for (const kind of ["res", "com", "ind"]) {
+      while (this.plots[kind] > 0 && open.length) {
+        const lot = open.splice(Math.floor(rand() * open.length), 1)[0];
+        if (this.placeBuilding(lot, kind, rand)) n++;
+      }
+    }
+    return n;
   }
 
   // A shop holds up to 30 coins per level and fills in ~1000 s / appeal. A
@@ -626,8 +662,8 @@ class City {
     return true;
   }
 
-  // Puts a placed special back in the bag. The lot is empty again and develops
-  // by demand like any other.
+  // Puts a placed special back in the bag. The lot is empty again, ready for
+  // whatever the town needs next.
   removeSpecial(lot) {
     if (!lot || lot.kind !== "special") return false;
     this.inventory.push(lot.special);
@@ -699,6 +735,7 @@ class City {
       roadJob: this.roadJob,
       roadChoice: this.roadChoice,
       inventory: this.inventory,
+      plots: this.plots,
       scanned: this.scanned,
       daily: this.daily,
       market: this.market,
@@ -722,10 +759,11 @@ class City {
       lot.coins = s[3];
       lot.special = s[4] || null;
     });
-    for (const k of ["materials", "coins", "pop", "roadJob", "roadChoice", "inventory", "scanned", "daily", "market", "tierReached", "stats", "createdAt", "lastSeen", "lastActive", "safetyGrace"]) {
+    for (const k of ["materials", "coins", "pop", "roadJob", "roadChoice", "inventory", "plots", "scanned", "daily", "market", "tierReached", "stats", "createdAt", "lastSeen", "lastActive", "safetyGrace"]) {
       if (data[k] !== undefined) city[k] = data[k];
     }
     if (data.lastActive === undefined) city.lastActive = city.lastSeen;
+    city.plots = { res: 0, com: 0, ind: 0, ...city.plots };
     // Fire Station drops placed before stations existed become level-2 stations.
     for (const lot of city.lots) {
       if (lot.kind === "special" && SPECIALS[lot.special]?.station) Object.assign(lot, { kind: "svc", special: SPECIALS[lot.special].station, level: 2 });

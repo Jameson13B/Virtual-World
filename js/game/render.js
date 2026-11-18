@@ -332,7 +332,7 @@ class CityRenderer {
       if (!visible(lot.poly.bounds)) continue;
       if (city.bagReady(lot)) this.#drawBubble(ctx, lot, vp, z, now);
       if (lot.incident) this.#drawIncident(ctx, lot, vp, z, now);
-      if (placing && lot.kind && lot.kind !== "special" && lot.kind !== "svc") {
+      if (placing && placing !== "empty" && lot.kind && lot.kind !== "special" && lot.kind !== "svc") {
         // a special can replace this building too
         ctx.setLineDash([16, 12]);
         lot.poly.draw(ctx, { fill: "rgba(0,0,0,0)", stroke: "rgba(250,204,21,0.8)", lineWidth: 5 * Math.max(1, z * 0.6) });

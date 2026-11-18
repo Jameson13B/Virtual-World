@@ -6,7 +6,7 @@
 const $ = (sel) => document.querySelector(sel);
 const SAVE_KEY = "vw.city";
 const PREFS_KEY = "vw.gamePrefs";
-const VERSION = "0.12.1";
+const VERSION = "0.13.0";
 
 const canvas = $("#cityCanvas");
 const ctx = canvas.getContext("2d");
@@ -384,7 +384,10 @@ function updateTopbar() {
     safe.classList.toggle("alert", !visit && (city.unpaid || city.incidents.length > 0));
   }
   $("#dailyBtn .dot").hidden = !city.dailyStatus().available;
-  $("#itemsBtn .dot").hidden = !city.inventory.length;
+  const dot = $("#itemsBtn .dot");
+  dot.hidden = !city.inventory.length && !city.plotCount;
+  dot.textContent = city.plotCount || "";
+  dot.classList.toggle("num", city.plotCount > 0);
 }
 
 // Counters roll up to their new value (and pop) instead of jumping.
@@ -462,7 +465,7 @@ function openAppeal() {
   let html =
     "<div class='stat-grid'><div class='stat'><b>✨ " + c.appeal.toFixed(2) + "</b><span>" + (visit ? "Their" : "Your") + " appeal</span></div>" +
     "<div class='stat'><b>" + pct(c.appeal - 1) + "</b><span>Faster growth</span></div></div>" +
-    "<p>Appeal speeds up everything: empty lots develop faster, people move in faster, and shops earn more coins.</p>" +
+    "<p>Appeal speeds up everything: new buildings arrive faster, people move in faster, and shops earn more coins.</p>" +
     "<div class='card'><h3>Where it comes from</h3><div class='list'>" +
     "<div class='row'><span class='grow'>🏕️ Every town</span><b>1.00</b></div>" +
     (c.tierReached >= SAFETY_TIER ? "<div class='row'><span class='grow'>🛡️ Fire &amp; police coverage</span><b>" + (c.safetyAppeal() >= 0 ? "+" : "") + Math.round(c.safetyAppeal() * 100) + "%</b></div>" : "") +
@@ -532,6 +535,15 @@ function handleEvents(events) {
       toast("⚠️ Out of 💰 for station upkeep – fire & police stopped responding", 4000);
     } else if (e.type === "paid") {
       toast("✅ Upkeep paid – fire & police are back on duty");
+    } else if (e.type === "plot" && !visit) {
+      // one nudge at a time, not one per building
+      const now = Date.now();
+      if (!ui.plotToast || now - ui.plotToast > 45000) {
+        ui.plotToast = now;
+        toast(KIND_ICONS[e.kind] + " A new " + PLOT_NAMES[e.kind].toLowerCase() + " is in 🎒 – tap an empty lot to build it");
+      }
+      bump("#itemsBtn .ico");
+      if (ui.placing === e.kind) placeText();
     } else if (e.type === "built" && !visit) {
       const b = e.lot;
       const label = KIND_ICONS[b.kind] || SERVICES[b.special]?.icon || SPECIALS[b.special]?.icon || "✨";
@@ -564,6 +576,10 @@ function onTap(world, screen) {
     if (!lot) return toast("Tap an empty lot, or a building to replace");
     if (lot.kind === "special" || lot.kind === "svc") return toast("Pick a lot without a special building or station");
     return confirmStation(lot);
+  }
+  if (ui.placing && isPlot(ui.placing)) {
+    if (!lot || lot.kind || lot.building > 0) return toast("Tap an empty lot");
+    return placeBuilding(lot, ui.placing);
   }
   if (ui.placing) {
     if (!lot) return toast("Tap an empty lot, or a building to replace");
@@ -602,6 +618,23 @@ function placeSpecial(lot) {
   saveGame();
 }
 
+// Builds a home, shop or factory from the bag on an empty lot.
+function buildHere(lot, kind) {
+  if (!city.placeBuilding(lot, kind)) return false;
+  floater(lot, KIND_ICONS[kind] + " " + PLOT_NAMES[kind] + " coming!", "#bbf7d0");
+  sfx.play("build");
+  buzz(30);
+  saveGame();
+  return true;
+}
+
+// In placing mode, keep going while there's more of that kind to place.
+function placeBuilding(lot, kind) {
+  if (!buildHere(lot, kind)) return;
+  if (city.plots[kind] > 0 && city.openLots().length) placeText();
+  else stopPlacing();
+}
+
 // Placing a special on a home, shop or factory tears it down, so ask first.
 function confirmReplace(lot) {
   const s = SPECIALS[ui.placing];
@@ -634,6 +667,10 @@ function revealLot(lot) {
 }
 
 const KIND_ICONS = { res: "🏠", com: "🏪", ind: "🏭" };
+const PLOT_NAMES = { res: "Home", com: "Shop", ind: "Factory" };
+const PLOT_ABOUT = { res: "Room for 6 people", com: "5 jobs, earns 💰", ind: "5 jobs, makes 🧱" };
+// Homes, shops and factories in the bag are placed like specials, by kind.
+const isPlot = (id) => id in PLOT_NAMES;
 const BUILDING_NAMES = {
   res: ["", "Cottage", "Townhouse", "Apartments"],
   com: ["", "Corner shop", "Market", "Office tower"],
@@ -654,8 +691,14 @@ function openLotSheet(lot, readOnly) {
     html = "<p>Builders are hard at work. Ready in about " + Math.ceil(lot.building) + " seconds.</p>";
   } else if (!lot.kind) {
     title = "🟩 Empty lot";
-    html = "<p>This land will develop by itself into homes or shops as your town needs them.</p>" +
-      (readOnly ? "" : "<p class='muted'>Got a special building? Place it here from 🎒 Items.</p>");
+    const kinds = readOnly ? [] : Object.keys(PLOT_NAMES).filter((k) => city.plots[k] > 0);
+    html = readOnly
+      ? "<p>This land is waiting for a building.</p>"
+      : kinds.length
+        ? "<p>What goes here? Your town needs these:</p><div class='build-pick'>" + kinds.map((k) =>
+            "<button data-plot='" + k + "' class='primary'><span>" + KIND_ICONS[k] + "</span><b>" + PLOT_NAMES[k] + "</b><small>" + city.plots[k] + " in 🎒</small></button>").join("") + "</div>"
+        : "<p>Nothing to build here yet. As your town grows it sends the homes, shops and factories it needs to 🎒 Items, and you pick a lot like this one for each.</p>";
+    if (!readOnly) html += "<p class='muted'>Got a special building? Place it here from 🎒 Items.</p>";
   } else if (lot.kind === "special") {
     const s = SPECIALS[lot.special], r = RARITY_INFO[s.rarity];
     const count = c.lots.filter((l) => l.special === lot.special).length;
@@ -666,7 +709,7 @@ function openLotSheet(lot, readOnly) {
       "<div class='stat-grid'><div class='stat'><b>+" + Math.round(s.appeal * 100) + "% ✨</b><span>Faster growth</span></div>" +
       "<div class='stat'><b>" + count + "</b><span>In " + (readOnly ? "their" : "your") + " town</span></div></div>" +
       (readOnly ? "" : "<button id='returnBtn' class='big'>🎒 Return to bag</button>" +
-        "<p class='muted' style='text-align:center'>The lot becomes empty and builds again by demand.</p>");
+        "<p class='muted' style='text-align:center'>The lot becomes empty, ready for whatever your town needs next.</p>");
   } else {
     const lvl = lot.effectiveLevel;
     const kind = lot.kind;
@@ -702,6 +745,9 @@ function openLotSheet(lot, readOnly) {
       saveGame();
       closeSheet();
     });
+    body.querySelectorAll("[data-plot]").forEach((b) => b.addEventListener("click", () => {
+      if (buildHere(lot, b.dataset.plot)) closeSheet();
+    }));
     const back = body.querySelector("#returnBtn");
     if (back) {
       back.addEventListener("click", () => {
@@ -891,16 +937,37 @@ $("#itemsBtn").addEventListener("click", () => {
   for (const id of city.inventory) counts[id] = (counts[id] || 0) + 1;
   const ids = Object.keys(counts);
   const spots = city.lots.filter((l) => l.kind !== "special").length;
-  const html = ids.length
+  const kinds = Object.keys(PLOT_NAMES).filter((k) => city.plots[k] > 0);
+  const open = city.openLots().length;
+  let html = "";
+  if (kinds.length) {
+    html += "<div class='card'><h3>🏗️ Ready to build</h3><p class='muted'>Your town needs these. You pick the empty lot each one goes on.</p><div class='list'>" +
+      kinds.map((k) => "<div class='item-row'><span class='emoji'>" + KIND_ICONS[k] + "</span><div class='grow'><b>" + PLOT_NAMES[k] + (city.plots[k] > 1 ? " ×" + city.plots[k] : "") + "</b>" +
+        "<small>" + PLOT_ABOUT[k] + "</small></div><button data-place='" + k + "' class='primary' " + (open ? "" : "disabled") + ">Place</button></div>").join("") + "</div>" +
+      (open ? "<button id='placeAll' class='big' style='margin-top:8px'>✨ Place them all for me</button>" : "<p class='muted'>No empty lots right now – a new road brings more.</p>") +
+      "</div>" + (ids.length ? "<h3>✨ Special buildings</h3>" : "");
+  }
+  html += ids.length
     ? "<div class='list'>" + ids.map((id) => {
         const s = SPECIALS[id], r = RARITY_INFO[s.rarity];
         return "<div class='item-row'><span class='emoji'>" + s.icon + "</span><div class='grow'><b>" + s.name + (counts[id] > 1 ? " ×" + counts[id] : "") + "</b>" +
           "<small><span class='rarity' style='color:" + r.color + "'>" + r.label + "</span> · " + (s.station ? "a free level-2 " + SERVICES[s.station].name.toLowerCase() : "+" + Math.round(s.appeal * 100) + "% ✨") + "</small></div>" +
           "<button data-place='" + id + "' class='primary' " + (spots ? "" : "disabled") + ">Place</button></div>";
       }).join("") + "</div>" + (spots ? "" : "<p class='muted'>Every lot already has a special building – wait for a new road.</p>")
-    : "<p>No special buildings yet.</p><p class='muted'>Scanning codes sometimes drops parks, schools, towers and more. Rarer codes, rarer drops! 🍀</p>";
+    : kinds.length
+      ? "<p class='muted'>✨ Scanning codes sometimes drops special buildings too: parks, schools, towers and more. 🍀</p>"
+      : "<p>Nothing in the bag right now.</p><p class='muted'>New homes, shops and factories land here as your town needs them. Scanning codes sometimes drops special buildings too: parks, schools, towers and more. Rarer codes, rarer drops! 🍀</p>";
   openSheet("🎒 Items", html, (body) => {
     body.querySelectorAll("[data-place]").forEach((b) => b.addEventListener("click", () => startPlacing(b.dataset.place)));
+    body.querySelector("#placeAll")?.addEventListener("click", () => {
+      const n = city.placeAll();
+      closeSheet();
+      if (!n) return;
+      toast("🏗️ " + n + (n > 1 ? " buildings are" : " building is") + " going up");
+      sfx.play("build");
+      buzz(30);
+      saveGame();
+    });
   });
 });
 
@@ -965,8 +1032,22 @@ function startPlacing(id) {
   closeSheet();
   stopRoadPick();
   ui.placing = id;
-  $("#placeText").textContent = "Tap where your " + SPECIALS[id].icon + " " + SPECIALS[id].name + " goes";
+  placeText();
   $("#placeBanner").hidden = false;
+  if (!isPlot(id)) return;
+  // Frame the empty lots so it's clear where it can go.
+  const open = city.openLots();
+  if (!open.length) return;
+  const b = boundsOf(open.map((l) => l.center));
+  const pad = LOT_DEPTH;
+  const zoom = clamp(Math.max((b.maxX - b.minX + pad * 2) / viewport.width, (b.maxY - b.minY + pad * 2) / (viewport.height * 0.7), 1.3), viewport.minZoom, viewport.maxZoom);
+  ui.focus = { at: new Point(-(b.minX + b.maxX) / 2, -(b.minY + b.maxY) / 2), zoom };
+}
+function placeText() {
+  const id = ui.placing;
+  $("#placeText").textContent = isPlot(id)
+    ? "Tap a lot for your " + KIND_ICONS[id] + " " + PLOT_NAMES[id].toLowerCase() + (city.plots[id] > 1 ? " · " + city.plots[id] + " left" : "")
+    : "Tap where your " + SPECIALS[id].icon + " " + SPECIALS[id].name + " goes";
 }
 function stopPlacing() {
   ui.placing = null;
@@ -1591,7 +1672,7 @@ function showWelcome(fresh) {
       "<p>Your town is tiny: one road in the middle of nowhere. Help it grow!</p>" +
       "<p style='text-align:left'>📷 <b>Scan QR codes</b> anywhere you see them – menus, posters, parking meters, packaging. Every new code feeds your town.<br>" +
       "🛣️ <b>Materials build roads</b> – you pick where each one goes.<br>" +
-      "🏠 <b>New roads bring homes and shops</b>, which bring people.<br>" +
+      "🏠 <b>New roads bring homes and shops</b>: they land in 🎒 and you pick the lot for each.<br>" +
       "💰 <b>Tap coin bubbles</b> on shops to collect.<br>" +
       "🎁 Claim your <b>daily gift</b> to keep a streak.</p>" +
       "<p class='muted'>No two towns are alike – yours was grown on " + MAP_TYPES[city.map].icon + " " + MAP_TYPES[city.map].name + " seed #" + city.seed + ".</p>",
@@ -2022,7 +2103,7 @@ function loop(now) {
   touch.update();
   if (!active.renderer.is3d) viewport.reset("#3f8f3a");
   active.renderer.draw(ctx, viewport, {
-    placing: !!(ui.placing || ui.placeStation),
+    placing: ui.placing && isPlot(ui.placing) ? "empty" : !!(ui.placing || ui.placeStation),
     roadPick: ui.roadPick ?? -1,
     selected: ui.selected,
     cars: visit ? ui.cars : [...ui.cars, ...ui.responders, ...(ui.collector ? ui.collector.trucks : [])],
@@ -2078,8 +2159,9 @@ function catchUp() {
   const s = city.simulate(worked);
   city.lastSeen = now;
   saveGame();
-  const waiting = city.roadChoice ? "<p class='muted'>🛣️ A new road is ready – choose where it goes!</p>" : "";
-  if (s.pop > 0 || s.roads > 0 || s.built > 0 || waiting) {
+  const waiting = (city.plotCount ? "<p class='muted'>🎒 " + city.plotCount + (city.plotCount > 1 ? " buildings are" : " building is") + " waiting for you to pick a lot!</p>" : "") +
+    (city.roadChoice ? "<p class='muted'>🛣️ A new road is ready – choose where it goes!</p>" : "");
+  if (s.pop > 0 || s.roads > 0 || s.plots > 0 || waiting) {
     const hours = away / 3600;
     showModal({
       icon: "🌙",
@@ -2087,7 +2169,7 @@ function catchUp() {
       body: "It's been " + (hours >= 1 ? Math.floor(hours) + "h " : "") + Math.floor((away % 3600) / 60) + "m." +
         (worked < away - 60 ? "<p class='muted'>Your town kept working for " + duration(worked * 1000) + " after your last tap, then rested.</p>" : "") +
         "<div class='gains'>" + (s.pop ? "<span class='gain'>+" + s.pop + " 👥</span>" : "") +
-        (s.built ? "<span class='gain'>+" + s.built + " 🏠</span>" : "") +
+        (s.plots ? "<span class='gain'>+" + s.plots + " 🎒</span>" : "") +
         (s.roads ? "<span class='gain'>+" + s.roads + " 🛣️</span>" : "") +
         (s.coins ? "<span class='gain'>+" + fmt(s.coins) + " 💰</span>" : "") + "</div>" +
         (s.upkeep ? "<p class='muted'>Station upkeep: " + fmt(s.upkeep) + " 💰 (included)</p>" : "") + waiting,
