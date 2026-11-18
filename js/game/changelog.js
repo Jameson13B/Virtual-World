@@ -6,6 +6,12 @@
 
 const CHANGELOG = [
   {
+    version: "0.13.2",
+    notes: [
+      "🚚 Rearrange your town: tap any building, then Move or swap to send it to an empty lot or trade places with another building. Levels and savings go along, and it's free",
+    ],
+  },
+  {
     version: "0.13.1",
     notes: [
       "💤 Your town now rests 15 minutes after your last tap (was 1 hour) – it grows when you're playing",

@@ -671,6 +671,24 @@ class City {
     return true;
   }
 
+  // Moves a finished building to an empty lot, or swaps it with the building
+  // there. Levels and anything stored inside go along. Free, so the player can
+  // rearrange their town however they like.
+  canMove(lot) {
+    return !!lot && !!lot.kind && lot.building <= 0 && !lot.incident;
+  }
+
+  moveBuilding(from, to) {
+    if (!this.canMove(from) || !to || to === from || to.building > 0 || to.incident) return false;
+    const fields = ["kind", "special", "level", "building", "coins", "visits"];
+    const a = {}, b = {};
+    for (const f of fields) [a[f], b[f]] = [from[f], to[f]];
+    Object.assign(from, b);
+    Object.assign(to, a);
+    if (from.kind === "svc" || to.kind === "svc") this.#invalidateSafety();
+    return true;
+  }
+
   // The market restocks every 6 hours (midnight, 6am, noon, 6pm) with half a
   // road's worth of materials, so coins speed a town up – more for players who
   // check in often – without letting taxes snowball it on their own.

@@ -6,7 +6,7 @@
 const $ = (sel) => document.querySelector(sel);
 const SAVE_KEY = "vw.city";
 const PREFS_KEY = "vw.gamePrefs";
-const VERSION = "0.13.1";
+const VERSION = "0.13.2";
 
 const canvas = $("#cityCanvas");
 const ctx = canvas.getContext("2d");
@@ -21,7 +21,7 @@ let city = null;
 let renderer = null;
 let visit = null; // { city, renderer } while looking at someone else's town
 const online = new Online(window.VW_CONFIG);
-const ui = { placing: null, placeStation: null, roadPick: null, focus: null, selected: null, floaters: [], cars: [], drive: null, follow: null, collector: null, responders: [], lens: "normal" };
+const ui = { placing: null, placeStation: null, moving: null, roadPick: null, focus: null, selected: null, floaters: [], cars: [], drive: null, follow: null, collector: null, responders: [], lens: "normal" };
 
 function readJSON(key, fallback = null) {
   try {
@@ -559,19 +559,21 @@ function handleEvents(events) {
 function onTap(world, screen) {
   const active = visit || { city, renderer };
   const z = viewport.zoom;
+  const busy = ui.placing || ui.placeStation || ui.moving;
   sfx.unlock();
 
-  if (!visit && !ui.placing && !ui.placeStation) {
+  if (!visit && !busy) {
     const hit = renderer.pickMarker(world, screen, z);
     if (hit) return hit.incident ? openLotSheet(hit.lot, false) : collect(hit.lot);
   }
 
-  if (!visit && !ui.placing && city.roadChoice) {
+  if (!visit && !busy && city.roadChoice) {
     const i = renderer.choiceAt(world, z, screen);
     if (i >= 0) return startRoadPick(i);
   }
 
   const lot = active.renderer.lotAt(world, screen);
+  if (ui.moving) return moveTo(lot);
   if (ui.placeStation) {
     if (!lot) return toast("Tap an empty lot, or a building to replace");
     if (lot.kind === "special" || lot.kind === "svc") return toast("Pick a lot without a special building or station");
@@ -680,6 +682,12 @@ function buildingName(lot, lvl = Math.max(1, lot.effectiveLevel)) {
   return KIND_ICONS[lot.kind] + " " + BUILDING_NAMES[lot.kind][lvl];
 }
 
+const MOVE_BUTTON = "<button id='moveBtn' class='big' style='margin-top:8px'>🚚 Move or swap</button>";
+function hookMove(body, lot) {
+  const btn = body.querySelector("#moveBtn");
+  if (btn) btn.addEventListener("click", () => startMoving(lot));
+}
+
 function openLotSheet(lot, readOnly) {
   ui.selected = lot;
   revealLot(lot);
@@ -734,8 +742,10 @@ function openLotSheet(lot, readOnly) {
       }
     }
   }
+  if (!readOnly && city.canMove(lot)) html += MOVE_BUTTON;
   if (!readOnly && lot.incident) html = incidentCard(lot.incident) + html;
   openSheet(title, html, (body) => {
+    hookMove(body, lot);
     const crew = body.querySelector("#crewBtn");
     if (crew) crew.addEventListener("click", () => {
       const e = city.callCrew(lot.incident);
@@ -1052,7 +1062,40 @@ function placeText() {
 function stopPlacing() {
   ui.placing = null;
   ui.placeStation = null;
+  ui.moving = null;
   $("#placeBanner").hidden = true;
+}
+
+// Moving a building: tap an empty lot to move it there, or another building to swap them.
+function lotLabel(lot) {
+  if (lot.kind === "svc") return SERVICES[lot.special].icon + " " + SERVICES[lot.special].name.toLowerCase();
+  if (lot.kind === "special") return SPECIALS[lot.special].icon + " " + SPECIALS[lot.special].name;
+  return buildingName(lot);
+}
+function startMoving(lot) {
+  closeSheet();
+  stopRoadPick();
+  stopPlacing();
+  ui.moving = lot;
+  ui.selected = lot;
+  $("#placeText").textContent = "Tap where your " + lotLabel(lot) + " goes";
+  $("#placeBanner").hidden = false;
+}
+function moveTo(lot) {
+  const from = ui.moving;
+  if (!city.lots.includes(from)) return stopPlacing(); // a different town was loaded
+  if (!lot) return toast("Tap an empty lot, or a building to swap with");
+  if (lot === from) return stopPlacing();
+  if (lot.building > 0) return toast("That lot is under construction");
+  if (lot.incident) return toast("Deal with the emergency there first");
+  const swap = !!lot.kind;
+  if (!city.moveBuilding(from, lot)) return toast("Can't move that right now");
+  floater(lot, swap ? "🔁 Swapped!" : "🚚 Moved!", "#bbf7d0");
+  sfx.play("build");
+  buzz(30);
+  ui.selected = lot;
+  stopPlacing();
+  saveGame();
 }
 $("#placeCancel").addEventListener("click", stopPlacing);
 
@@ -1946,9 +1989,11 @@ function openStationSheet(lot, readOnly) {
       html += "<button id='upgradeBtn' class='gold big'" + (up.ok ? "" : " disabled") + ">⬆️ Level " + (lot.level + 1) + ": " + next.vehicles + " " + svc.vehicle + "s, faster · " + fmt(up.cost) + " 💰</button>" +
         (city.coins < up.cost ? "<p class='muted' style='text-align:center'>Not enough coins</p>" : "");
     } else html += "<p class='muted'>Fully upgraded! 🌟</p>";
+    if (city.canMove(lot)) html += MOVE_BUTTON;
     html += "<button id='closeStation' class='ghost big' style='margin-top:8px;color:#fca5a5'>Close this station</button>";
   }
   openSheet(svc.icon + " " + svc.name + " · level " + lvl, html, (body) => {
+    hookMove(body, lot);
     const up = body.querySelector("#upgradeBtn");
     if (up) up.addEventListener("click", () => {
       if (!city.upgradeStation(lot)) return;
@@ -2103,7 +2148,7 @@ function loop(now) {
   touch.update();
   if (!active.renderer.is3d) viewport.reset("#3f8f3a");
   active.renderer.draw(ctx, viewport, {
-    placing: ui.placing && isPlot(ui.placing) ? "empty" : !!(ui.placing || ui.placeStation),
+    placing: ui.moving || (ui.placing && isPlot(ui.placing)) ? "empty" : !!(ui.placing || ui.placeStation),
     roadPick: ui.roadPick ?? -1,
     selected: ui.selected,
     cars: visit ? ui.cars : [...ui.cars, ...ui.responders, ...(ui.collector ? ui.collector.trucks : [])],
