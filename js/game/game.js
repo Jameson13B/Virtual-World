@@ -6,7 +6,7 @@
 const $ = (sel) => document.querySelector(sel);
 const SAVE_KEY = "vw.city";
 const PREFS_KEY = "vw.gamePrefs";
-const VERSION = "0.13.2";
+const VERSION = "0.14.0";
 
 const canvas = $("#cityCanvas");
 const ctx = canvas.getContext("2d");
@@ -572,6 +572,11 @@ function onTap(world, screen) {
     if (i >= 0) return startRoadPick(i);
   }
 
+  if (!busy) {
+    const car = carAt(world, z);
+    if (car) return openCarSheet(car);
+  }
+
   const lot = active.renderer.lotAt(world, screen);
   if (ui.moving) return moveTo(lot);
   if (ui.placeStation) {
@@ -594,6 +599,44 @@ function onTap(world, screen) {
   }
   if (!visit && city.bagReady(lot)) return collect(lot);
   openLotSheet(lot, !!visit);
+}
+
+// The resident's car under a tap, if any (generous, since cars are small and moving).
+function carAt(world, z) {
+  let best = null, bestD = Math.max(35, 24 * z);
+  for (const car of ui.cars) {
+    if (!(car instanceof Commuter) || car.grow < 0.5) continue;
+    const d = distance(car, world);
+    if (d < bestD) [best, bestD] = [car, d];
+  }
+  return best;
+}
+
+function placeName(lot) {
+  if (lot.kind === "special") return SPECIALS[lot.special].icon + " " + SPECIALS[lot.special].name;
+  return lot.kind in PLOT_NAMES ? buildingName(lot) : "🟩 an empty lot";
+}
+
+const TRIP_DOING = { home: "Heading home to", work: "On the way to work at", errand: "Going shopping at", fun: "Going out to" };
+function openCarSheet(car) {
+  const at = car.stops[car.leg];
+  const now = car.state === "driving" ? TRIP_DOING[car.why[car.leg + 1]] + " " + placeName(car.target)
+    : car.state === "starting" ? "Pulling out of " + placeName(at)
+    : car.yielding ? "Pulled over to let traffic by"
+    : car.state === "parked" ? (car.why[car.leg] === "errand" ? "Shopping at " : "Stopped at ") + placeName(at)
+    : "Parking at " + placeName(at);
+  const route = car.stops.map((l, i) => (i === car.leg ? "<b>" + placeName(l) + "</b>" : placeName(l))).join(" → ");
+  openSheet("🚗 " + car.name + "'s car",
+    "<div class='card'><div class='row'><span class='grow'>Lives at</span><b>" + placeName(car.home) + "</b></div>" +
+    "<div class='row'><span class='grow'>Works at</span><b>" + placeName(car.work) + "</b></div></div>" +
+    "<p>" + now + ".</p><p class='muted'>" + car.label + ": " + route + "</p>" +
+    "<button id='followBtn' class='big'>👀 Follow " + car.name + "</button>" +
+    "<p class='muted' style='text-align:center'>Residents drive to work, run errands and head home by your phone's clock. Every shopper who stops at a shop spends 💰 there.</p>",
+    (body) => body.querySelector("#followBtn").addEventListener("click", () => {
+      ui.follow = car;
+      closeSheet();
+      toast("👀 Following " + car.name + " – pan the map to stop");
+    }));
 }
 
 function collect(lot) {
@@ -732,6 +775,7 @@ function openLotSheet(lot, readOnly) {
       if (kind !== "res") html += city.bagReady(lot)
         ? "<p>Waiting to collect: <b>" + Math.floor(lot.coins) + " " + unit + "</b></p>"
         : "<p class='muted'>Saving up: " + Math.floor(lot.coins) + " " + unit + " – the " + (kind === "ind" ? "📦 crate" : "💰 bag") + " appears at " + Math.ceil(city.storeCap(lot) * 0.25) + ".</p>";
+      if (kind === "com") html += "<p class='muted'>🛍️ Shoppers who stop by spend " + Math.max(1, lvl) + " 💰 each" + (lot.visits ? " – " + lot.visits + " since you opened the game" : "") + ".</p>";
       const up = city.upgradeInfo(lot);
       if (up) {
         const why = city.pop < up.needPop ? "Needs " + up.needPop + " population" : city.coins < up.cost ? "Not enough coins" : "";
@@ -1838,7 +1882,7 @@ function updateCollector() {
   if (!c) return;
   if (c.city !== city) return (ui.collector = null); // a different town was loaded
   if (visit) return; // parked while you're away visiting
-  const everyone = [...ui.cars, ...c.trucks];
+  const everyone = [...carsOnRoad(), ...c.trucks];
   for (const t of c.trucks) t.update(everyone);
   // Done, or stuck for 90 s without reaching a shop: send the bill.
   if (!c.pool.size || performance.now() - c.lastStop > 90000) {
@@ -2030,7 +2074,7 @@ function updateResponders(dt) {
     inc.responder = v;
     ui.responders.push(v);
   }
-  const everyone = [...ui.cars, ...ui.responders, ...(ui.collector ? ui.collector.trucks : [])];
+  const everyone = [...carsOnRoad(), ...ui.responders, ...(ui.collector ? ui.collector.trucks : [])];
   for (const v of ui.responders) {
     if (v.station.kind !== "svc") v.state = "done"; // its station closed
     else if ((v.state === "out" || v.state === "working") && v.inc.lot.incident !== v.inc) v.state = "back"; // over without us
@@ -2043,8 +2087,9 @@ function updateResponders(dt) {
   ui.responders = ui.responders.filter((v) => v.state !== "done");
 }
 
-// One car per 6 people, but no more than the roads can comfortably hold
-// (one per 250 units of road), and at most 60 so phones stay smooth.
+// Up to one car per 6 people, but no more than the roads can comfortably hold
+// (one per 250 units of road), and at most 60 so phones stay smooth. The
+// count stays the same around the clock, so shop visits (and income) do too.
 function roadLength(c) {
   const segs = c.layout.graph.segments;
   if (c._roadLen && c._roadLen.n === segs.length) return c._roadLen.len;
@@ -2052,22 +2097,37 @@ function roadLength(c) {
   c._roadLen = { n: segs.length, len };
   return len;
 }
+// Cars pulled over at a stop are out of the way of traffic.
+const carsOnRoad = () => ui.cars.filter((car) => !car.parked);
+
 function updateTraffic(active) {
   const c = active.city;
   const want = Math.min(60, Math.floor(c.pop / 6), Math.floor(roadLength(c) / 250));
-  while (ui.cars.length > want) ui.cars.pop();
-  if (ui.cars.length < want) {
-    // Add one car per frame, and only where it won't land on top of another.
-    const car = new TownCar(active.city.layout.graph);
-    for (let i = 0; i < 5 && ui.cars.some((o) => distance(o, car) < 80); i++) car.spawn();
-    if (!ui.cars.some((o) => distance(o, car) < 80)) ui.cars.push(car);
+  // Residents finish their trips and go inside; if the town shrinks, cars leave.
+  ui.cars = ui.cars.filter((car) => !car.done);
+  if (ui.cars.length > want) ui.cars.pop();
+  else if (ui.cars.length < want) {
+    // One new trip per frame, from a building, unless another car is in the way.
+    const trip = planTrip(c.lots, clockHour());
+    const car = trip ? new Commuter(c.layout.graph, trip, onStop) : new TownCar(c.layout.graph);
+    if (!ui.cars.some((o) => distance(o, car) < 60)) ui.cars.push(car);
   }
-  const everyone = [...ui.cars];
+  const everyone = carsOnRoad();
   if (ui.drive) everyone.push(ui.drive);
   if (ui.collector && !visit) everyone.push(...ui.collector.trucks);
   if (!visit) everyone.push(...ui.responders);
   for (const car of ui.cars) car.update(everyone);
   updateCollector();
+}
+
+// A shopper stopping at a shop spends a little there (more at bigger shops),
+// which goes into its 💰 bag.
+function onStop(car, lot, why) {
+  if (visit || why !== "errand" || lot.kind !== "com" || lot.building > 0 || lot.incident) return;
+  const spend = Math.max(1, lot.effectiveLevel);
+  lot.coins = Math.min(lot.coins + spend, city.storeCap(lot));
+  lot.visits = (lot.visits || 0) + 1;
+  if (viewport.zoom < 1.5) floater(car, "🛍️ +" + spend + " 💰", "#fde68a");
 }
 
 // ---------------------------------------------------------------------------
@@ -2100,7 +2160,12 @@ function loop(now) {
   last = now;
   viewport.fit();
   if (ui.follow) {
-    if (!ui.collector || !ui.collector.trucks.includes(ui.follow) || visit) ui.follow = null;
+    const truck = ui.collector && ui.collector.trucks.includes(ui.follow) && !visit;
+    if (!truck && !(ui.cars.includes(ui.follow) && !ui.follow.done)) {
+      const f = ui.follow;
+      if (f instanceof Commuter && f.done && f.leg === f.stops.length - 1) toast("🏁 " + f.name + " made it to " + placeName(f.stops[f.leg]));
+      ui.follow = null;
+    }
     else {
       viewport.offset = lerp2D(viewport.offset, scale(ui.follow, -1), 0.1);
       viewport.zoom += (Math.min(viewport.zoom, 1.6) - viewport.zoom) * 0.08;

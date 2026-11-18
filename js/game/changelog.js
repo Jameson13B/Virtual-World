@@ -6,6 +6,15 @@
 
 const CHANGELOG = [
   {
+    version: "0.14.0",
+    notes: [
+      "🚗 Your residents now have real days! Cars pull out of homes, drive to work, run errands and head home, following your phone's clock",
+      "🌅 Mornings are for the commute, middays for errands, and at night people head out to parks and specials",
+      "🛍️ Shoppers matter: everyone who stops at a shop spends 💰 there, so its bag fills faster while you play",
+      "👆 Tap a car to see who's driving, where they live and work, and follow them home",
+    ],
+  },
+  {
     version: "0.13.2",
     notes: [
       "🚚 Rearrange your town: tap any building, then Move or swap to send it to an empty lot or trade places with another building. Levels and savings go along, and it's free",

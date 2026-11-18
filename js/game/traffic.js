@@ -221,6 +221,161 @@ class TownCar extends Car {
 }
 
 // ---------------------------------------------------------------------------
+// Residents' cars. Each one belongs to someone with a home and a job, and
+// makes one trip that fits the time of day on the phone's clock: to work in
+// the morning, errands at lunch, home in the evening, out to a park at night.
+// It pulls out of the first building, pulls over at each stop and disappears
+// into the last one. Stopping at a shop is a visit, and visitors spend 💰.
+// ---------------------------------------------------------------------------
+const clockHour = (date = new Date()) => date.getHours() + date.getMinutes() / 60;
+
+// The trips people make at each time of day, as [stops, weight]. An errand is
+// a shop; fun is a park or another special (or a shop if the town has none).
+// Half the trips at any hour stop at a shop (not just start at one), so shop
+// visits stay steady around the clock.
+const TRIPS = [
+  { until: 6, label: "🌙 Late night", trips: [[["work", "home"], 1], [["fun", "home"], 1], [["work", "errand", "home"], 2]] },
+  { until: 10, label: "🌅 Morning commute", trips: [[["home", "work"], 1], [["home", "errand", "work"], 1]] },
+  { until: 16, label: "☀️ Daytime errands", trips: [[["work", "errand", "work"], 1], [["home", "errand", "home"], 1], [["home", "fun", "home"], 1], [["home", "work"], 1]] },
+  { until: 20, label: "🌆 Evening commute", trips: [[["work", "home"], 1], [["work", "errand", "home"], 1]] },
+  { until: 24, label: "🌃 Night out", trips: [[["home", "fun"], 1], [["home", "errand", "home"], 1]] },
+];
+const DRIVER_NAMES = ["Ava", "Ben", "Chloe", "Dev", "Ella", "Finn", "Gia", "Hugo", "Iris", "Jay", "Kai", "Lena", "Milo", "Nora", "Omar", "Pia", "Quinn", "Rosa", "Sam", "Theo", "Uma", "Vic", "Wren", "Yara", "Zane"];
+
+// Picks someone (a home and a job) and the trip they're making at `hour`, or
+// null if the town has nowhere to go yet.
+function planTrip(lots, hour, rand = Math.random) {
+  const homes = [], jobs = [], shops = [], fun = [];
+  for (const l of lots) {
+    if (l.building > 0 || l.incident) continue;
+    if (l.kind === "res") homes.push(l);
+    else if (l.kind === "com") jobs.push(l), shops.push(l);
+    else if (l.kind === "ind") jobs.push(l);
+    else if (l.kind === "special") fun.push(l);
+  }
+  const pick = (arr) => (arr.length ? arr[Math.floor(rand() * arr.length)] : null);
+  const home = pick(homes), work = pick(jobs);
+  if (!home || !work) return null;
+  const errand = pick(shops.filter((l) => l !== work));
+  const places = { home, work, errand, fun: pick(fun) || errand };
+
+  const period = TRIPS.find((p) => hour < p.until);
+  let r = rand() * period.trips.reduce((sum, [, w]) => sum + w, 0);
+  const [plan] = period.trips.find(([, w]) => (r -= w) < 0) || period.trips[0];
+  const stops = [], why = [];
+  for (const kind of plan) {
+    const lot = places[kind];
+    if (!lot || lot === stops[stops.length - 1]) continue;
+    stops.push(lot);
+    why.push(kind);
+  }
+  if (stops.length < 2) return null;
+  return { home, work, stops, why, label: period.label, name: pick(DRIVER_NAMES) };
+}
+
+// The middle of a lot's frontage: where its visitors pull over.
+function curbPoint(seg, p) {
+  const d = subtract(seg.p2, seg.p1);
+  const t = clamp(dot(subtract(p, seg.p1), d) / dot(d, d), 0.15, 0.85);
+  return add(seg.p1, scale(d, t));
+}
+
+const PULL_OVER = ROAD_W / 2 - LANE_OFFSET - 8; // from the lane to the curb
+const PARK_REACH = LANE_OFFSET + 15;
+const TRIP_LIMIT = 60 * 240; // frames; still driving after ~4 minutes, they call it a day
+
+class Commuter extends TownCar {
+  // trip: from planTrip(). onStop(car, lot, why) runs at each stop after the first.
+  constructor(graph, trip, onStop) {
+    super(graph);
+    Object.assign(this, trip);
+    this.onStop = onStop;
+    this.leg = 0; // the stop it's at, or last left
+    this.state = "starting"; // → driving ⇄ parked → leaving → done
+    this.wait = 45;
+    this.age = 0;
+    this.grow = 0; // pops out of the building, and shrinks back into the last one
+    this.pull = 1; // 1 = pulled over at the curb, 0 = in its lane
+    this.full = { w: this.width, h: this.height };
+    const from = this.stops[0], seg = graph.segments[from.segIndex];
+    this.spawn(seg, curbPoint(seg, from.center), this.stops[1].center);
+    this.#pose();
+  }
+
+  get target() {
+    return this.stops[this.leg + 1];
+  }
+
+  // Not in traffic: other cars drive past it.
+  get parked() {
+    return this.state !== "driving";
+  }
+
+  get done() {
+    return this.state === "done";
+  }
+
+  spawn(seg = null, at = null, toward = null) {
+    // Instead of a random respawn (gridlock), pull over and let traffic by.
+    if (this.stops && !seg) return void ([this.state, this.wait, this.yielding] = ["parked", 120, true]);
+    super.spawn(seg, at, toward);
+    this.lane = { x: this.x, y: this.y };
+  }
+
+  // Drive to the next stop's road, then along it.
+  destination(from, to) {
+    if (!this.stops) return null; // (not set yet while spawning)
+    const seg = this.graph.segments[this.target.segIndex];
+    if (to === seg.p1) return seg.p2;
+    if (to === seg.p2) return seg.p1;
+    return distance(to, seg.p1) <= distance(to, seg.p2) ? seg.p1 : seg.p2;
+  }
+
+  update(others) {
+    this.age++;
+    if (this.state === "driving") {
+      super.update(others);
+      if (this.state !== "driving") return; // gridlocked: pulling over
+      this.lane = { x: this.x, y: this.y };
+      this.pull = Math.max(0, this.pull - 0.04);
+      const seg = this.graph.segments[this.target.segIndex];
+      if (this.age > TRIP_LIMIT) this.state = "leaving";
+      else if (seg && distance(this, curbPoint(seg, this.target.center)) < PARK_REACH) this.#arrive();
+    } else {
+      this.pull = Math.min(1, this.pull + 0.05);
+      if (this.state === "leaving") {
+        if (this.pull >= 1 && (this.grow -= 0.04) <= 0) this.state = "done";
+      } else {
+        this.grow = Math.min(1, this.grow + 0.05);
+        // Pull out once there's a gap in the traffic.
+        if (--this.wait <= 0 && !others.some((o) => o !== this && distance(o, this.lane) < 70)) [this.state, this.yielding] = ["driving", false];
+      }
+    }
+    this.#pose();
+  }
+
+  #arrive() {
+    this.leg++;
+    this.speed = 0;
+    this.onStop?.(this, this.stops[this.leg], this.why[this.leg]);
+    if (this.leg === this.stops.length - 1) this.state = "leaving";
+    else [this.state, this.wait] = ["parked", 90 + Math.random() * 120];
+  }
+
+  // Shifts the car from its lane toward the curb and sizes it as it pops in or out.
+  #pose() {
+    const side = perpendicular(forwardFromHeading(this.angle));
+    const k = PULL_OVER * this.pull * this.pull * (3 - 2 * this.pull);
+    this.x = this.lane.x + side.x * k;
+    this.y = this.lane.y + side.y * k;
+    const g = Math.max(0.05, this.grow);
+    this.width = this.full.w * g;
+    this.height = this.full.h * g;
+    this.polygon = this.createPolygon();
+  }
+}
+
+// ---------------------------------------------------------------------------
 // The hired collector: an armored truck that drives past every shop once,
 // emptying its 💰 bubble and keeping a cut. Trucks hired together share one
 // set of shops still to visit (`pool`), so two trucks split the town.
