@@ -661,7 +661,7 @@ export class LowPolyRenderer {
   // ---- fire & police coverage -----------------------------------------------------
   #updateCoverage(kind) {
     const stations = kind ? this.city.stations(kind) : [];
-    const key = kind ? kind + stations.map((s) => s.id).join(",") : "";
+    const key = kind ? kind + stations.map((s) => s.id + ":" + City.reach(s)).join(",") : "";
     if (key === this.coverageKey) return;
     this.coverageKey = key;
     for (const m of [...this.coverage.children]) {
@@ -675,12 +675,12 @@ export class LowPolyRenderer {
     this.coverMat.color.set(color);
     this.coverEdge.color.set(color);
     for (const st of stations) {
-      const y = elevation(ROCK) + 4;
-      const disc = new THREE.CircleGeometry(SERVICE_RADIUS, 48).rotateX(-Math.PI / 2);
+      const y = elevation(ROCK) + 4, r = City.reach(st);
+      const disc = new THREE.CircleGeometry(r, 48).rotateX(-Math.PI / 2);
       const m = new THREE.Mesh(disc, this.coverMat);
       m.position.set(st.center.x, y, st.center.y);
       m.renderOrder = 4;
-      const edge = new THREE.Mesh(new THREE.RingGeometry(SERVICE_RADIUS - 14, SERVICE_RADIUS, 64).rotateX(-Math.PI / 2), this.coverEdge);
+      const edge = new THREE.Mesh(new THREE.RingGeometry(r - 14, r, 64).rotateX(-Math.PI / 2), this.coverEdge);
       edge.position.copy(m.position);
       edge.renderOrder = 4;
       this.coverage.add(m, edge);

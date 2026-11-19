@@ -6,7 +6,7 @@
 const $ = (sel) => document.querySelector(sel);
 const SAVE_KEY = "vw.city";
 const PREFS_KEY = "vw.gamePrefs";
-const VERSION = "0.14.1";
+const VERSION = "0.15.0";
 
 const canvas = $("#cityCanvas");
 const ctx = canvas.getContext("2d");
@@ -773,7 +773,8 @@ function openLotSheet(lot, readOnly) {
       "<div class='stat-grid'><div class='stat'><b>+" + Math.round(s.appeal * 100) + "% ✨</b><span>Faster growth</span></div>" +
       "<div class='stat'><b>" + count + "</b><span>In " + (readOnly ? "their" : "your") + " town</span></div></div>" +
       (readOnly ? "" : "<button id='returnBtn' class='big'>🎒 Return to bag</button>" +
-        "<p class='muted' style='text-align:center'>The lot becomes empty, ready for whatever your town needs next.</p>");
+        "<button id='sellBtn' class='ghost big' style='margin-top:8px'>💸 Sell · " + sellLabel(lot.special) + "</button>" +
+        "<p class='muted' style='text-align:center'>Either way the lot becomes empty, ready for whatever your town needs next.</p>");
   } else {
     const lvl = lot.effectiveLevel;
     const kind = lot.kind;
@@ -827,6 +828,9 @@ function openLotSheet(lot, readOnly) {
         }
       });
     }
+    body.querySelector("#sellBtn")?.addEventListener("click", () => {
+      if (sellSpecial(lot.special, lot)) closeSheet();
+    });
     const btn = body.querySelector("#upgradeBtn");
     if (btn) {
       btn.addEventListener("click", () => {
@@ -998,6 +1002,24 @@ $("#marketBtn").addEventListener("click", () => {
   });
 });
 
+function sellLabel(id) {
+  const v = city.sellValue(id);
+  return fmt(v.coins) + " 💰 + " + fmt(v.materials) + " 🧱";
+}
+
+// Sells a special from the bag, or the one placed on `lot`, after asking.
+function sellSpecial(id, lot = null) {
+  const s = SPECIALS[id];
+  if (!confirm("Sell your " + s.name + " for " + sellLabel(id) + "? It's gone for good.")) return false;
+  const v = city.sellSpecial(id, lot);
+  if (!v) return false;
+  if (lot) floater(lot, "💸 +" + fmt(v.coins) + " 💰 +" + fmt(v.materials) + " 🧱", "#fde68a");
+  else toast("💸 Sold " + s.icon + " " + s.name + " for " + fmt(v.coins) + " 💰 + " + fmt(v.materials) + " 🧱");
+  buzz(30);
+  saveGame();
+  return true;
+}
+
 $("#itemsBtn").addEventListener("click", () => {
   if (visit) return;
   const counts = {};
@@ -1019,13 +1041,19 @@ $("#itemsBtn").addEventListener("click", () => {
         const s = SPECIALS[id], r = RARITY_INFO[s.rarity];
         return "<div class='item-row'><span class='emoji'>" + s.icon + "</span><div class='grow'><b>" + s.name + (counts[id] > 1 ? " ×" + counts[id] : "") + "</b>" +
           "<small><span class='rarity' style='color:" + r.color + "'>" + r.label + "</span> · " + (s.station ? "a free level-2 " + SERVICES[s.station].name.toLowerCase() : "+" + Math.round(s.appeal * 100) + "% ✨") + "</small></div>" +
-          "<button data-place='" + id + "' class='primary' " + (spots ? "" : "disabled") + ">Place</button></div>";
+          "<button data-place='" + id + "' class='primary' " + (spots ? "" : "disabled") + ">Place</button>" +
+          "<button data-sell='" + id + "' class='ghost small' title='Sell for " + sellLabel(id) + "'>💸</button></div>";
       }).join("") + "</div>" + (spots ? "" : "<p class='muted'>Every lot already has a special building – wait for a new road.</p>")
     : kinds.length
       ? "<p class='muted'>✨ Scanning codes sometimes drops special buildings too: parks, schools, towers and more. 🍀</p>"
       : "<p>Nothing in the bag right now.</p><p class='muted'>New homes, shops and factories land here as your town needs them. Scanning codes sometimes drops special buildings too: parks, schools, towers and more. Rarer codes, rarer drops! 🍀</p>";
   openSheet("🎒 Items", html, (body) => {
     body.querySelectorAll("[data-place]").forEach((b) => b.addEventListener("click", () => startPlacing(b.dataset.place)));
+    body.querySelectorAll("[data-sell]").forEach((b) => b.addEventListener("click", () => {
+      if (!sellSpecial(b.dataset.sell)) return;
+      closeSheet();
+      $("#itemsBtn").click();
+    }));
     body.querySelector("#placeAll")?.addEventListener("click", () => {
       const n = city.placeAll();
       closeSheet();
@@ -1975,7 +2003,7 @@ function openSafety() {
     "<div class='list'>" + kinds + "</div>" +
     "<div class='card'><h3>💸 Upkeep</h3><div class='row'><span class='grow'>All stations</span><b>" + perHour(upkeep) + " 💰/hour</b></div>" +
     "<div class='row'><span class='grow'>Your income</span><b>" + perHour(income) + " 💰/hour</b></div>" +
-    "<p class='muted'>Covering the whole town with both kinds costs about " + Math.round(UPKEEP_SHARE * 100) + "% of your income (" + perHour(city.stationUpkeep()) + " 💰/hour per station). Upgrades add vehicles and speed, not range.</p></div>" +
+    "<p class='muted'>Covering the whole town with both kinds costs about " + Math.round(UPKEEP_SHARE * 100) + "% of your income (" + perHour(city.stationUpkeep()) + " 💰/hour per station). Level 2 reaches farther and responds faster; level 3 adds a second vehicle.</p></div>" +
     "<p class='muted'>Emergencies only happen while you're playing.</p>";
   ui.showCoverage = "fire";
   openSheet("🛡️ Fire & police", html, (body) => {
@@ -2042,8 +2070,8 @@ function openStationSheet(lot, readOnly) {
     if (city.unpaid) html += "<p class='muted'>⚠️ Upkeep unpaid – not responding.</p>";
     const up = city.stationUpgradeInfo(lot);
     if (up) {
-      const next = City.response(lot.level + 1);
-      html += "<button id='upgradeBtn' class='gold big'" + (up.ok ? "" : " disabled") + ">⬆️ Level " + (lot.level + 1) + ": " + next.vehicles + " " + svc.vehicle + "s, faster · " + fmt(up.cost) + " 💰</button>" +
+      const what = lot.level === 1 ? "bigger area" : "2nd " + svc.vehicle;
+      html += "<button id='upgradeBtn' class='gold big'" + (up.ok ? "" : " disabled") + ">⬆️ Level " + (lot.level + 1) + ": " + what + ", faster · " + fmt(up.cost) + " 💰</button>" +
         (city.coins < up.cost ? "<p class='muted' style='text-align:center'>Not enough coins</p>" : "");
     } else html += "<p class='muted'>Fully upgraded! 🌟</p>";
     if (city.canMove(lot)) html += MOVE_BUTTON;

@@ -37,14 +37,15 @@ const SPECIALS = {
 const SPECIAL_IDS = Object.keys(SPECIALS);
 
 // Fire and police stations (lot kind "svc", with `special` holding which one).
-// Each covers every building within SERVICE_RADIUS; upgrades add vehicles and
-// a faster response, never a bigger circle.
+// Each covers every building within its radius. Level 2 widens the circle and
+// responds faster; level 3 adds a second vehicle and responds faster still.
 const SERVICES = {
   fire: { icon: "🚒", name: "Fire station", vehicle: "fire truck", incident: "🔥", about: "Puts out fires before buildings burn down." },
   police: { icon: "🚓", name: "Police station", vehicle: "police car", incident: "🦹", about: "Stops robberies before shops lose their 💰." },
 };
 const SERVICE_IDS = Object.keys(SERVICES);
 const SERVICE_RADIUS = 1500;
+const SERVICE_RADIUS_WIDE = 2100; // level 2 and up
 const SAFETY_TIER = 2; // Town: stations unlock and emergencies start
 const UPKEEP_SHARE = 0.2; // full level-1 coverage of both kinds costs 20% of income
 const INCIDENT_TIME = { fire: 60, police: 120 }; // seconds until a fire burns / robbers escape
@@ -176,9 +177,15 @@ class City {
     return this.unpaid ? [] : this.stations(kind).filter((l) => l.building <= 0);
   }
 
+  // How far a station reaches. Any other lot (say, one picked for a new
+  // station) gets the level-1 radius.
+  static reach(lot) {
+    return lot.kind === "svc" && lot.effectiveLevel >= 2 ? SERVICE_RADIUS_WIDE : SERVICE_RADIUS;
+  }
+
   static covers(station, lot) {
-    const dx = station.center.x - lot.center.x, dy = station.center.y - lot.center.y;
-    return dx * dx + dy * dy <= SERVICE_RADIUS * SERVICE_RADIUS;
+    const dx = station.center.x - lot.center.x, dy = station.center.y - lot.center.y, r = City.reach(station);
+    return dx * dx + dy * dy <= r * r;
   }
 
   // Share of homes, shops and factories each service covers, cached for a
@@ -248,24 +255,25 @@ class City {
     return this.stations().length * this.stationUpkeep();
   }
 
-  // Half an hour of income, a quarter more for each station of that kind you
+  // Ten minutes of income, 15% more for each station of that kind you
   // already have.
   stationCost(kind) {
-    const base = Math.max(200, this.incomeRate() * 1800);
-    return Math.round((base * (1 + 0.25 * this.stations(kind).length)) / 10) * 10;
+    const base = Math.max(100, this.incomeRate() * 600);
+    return Math.round((base * (1 + 0.15 * this.stations(kind).length)) / 10) * 10;
   }
 
+  // Level 2 costs 20 minutes of income, level 3 costs 45.
   stationUpgradeInfo(lot) {
     if (lot.kind !== "svc" || lot.level >= 3) return null;
-    const hours = lot.level === 1 ? 1.5 : 4;
-    const cost = Math.round(Math.max(lot.level === 1 ? 600 : 1600, this.incomeRate() * 3600 * hours) / 10) * 10;
+    const minutes = lot.level === 1 ? 20 : 45;
+    const cost = Math.round(Math.max(lot.level === 1 ? 200 : 500, this.incomeRate() * 60 * minutes) / 10) * 10;
     return { cost, ok: this.coins >= cost && lot.building <= 0 };
   }
 
   // How a station of this level responds: vehicles out at once, seconds to
   // dispatch and on scene, and how fast its vehicles drive.
   static response(level) {
-    return { vehicles: level, dispatch: [0, 6, 3, 1][level], work: [0, 4, 3, 2][level], speed: [0, 3, 3.6, 4.2][level] };
+    return { vehicles: level >= 3 ? 2 : 1, dispatch: [0, 6, 3, 1][level], work: [0, 4, 3, 2][level], speed: [0, 3, 3.6, 4.2][level] };
   }
 
   // Builds a station on an empty lot or in place of a home, shop or factory.
@@ -304,7 +312,7 @@ class City {
     let best = null, bestD = Infinity;
     for (const s of this.#working(kind)) {
       const d = distance(s.center, lot.center);
-      if (d <= SERVICE_RADIUS && d < bestD) [best, bestD] = [s, d];
+      if (d <= City.reach(s) && d < bestD) [best, bestD] = [s, d];
     }
     return best;
   }
@@ -660,6 +668,32 @@ class City {
     this.inventory.splice(i, 1);
     Object.assign(lot, { kind: "special", special: id, level: 1, building: 6, coins: 0 });
     return true;
+  }
+
+  // What a special sells for: a few minutes of income and a little 🧱,
+  // more for rarer ones.
+  sellValue(id) {
+    const m = { uncommon: 1, rare: 2, legendary: 4 }[SPECIALS[id].rarity] || 1;
+    return {
+      coins: Math.round((Math.max(50, this.incomeRate() * 300) * m) / 10) * 10,
+      materials: Math.max(1, Math.round(this.roadCost() * 0.1 * m)),
+    };
+  }
+
+  // Sells a special from the bag, or a placed one (`lot`), which empties its lot.
+  sellSpecial(id, lot = null) {
+    if (lot) {
+      if (lot.kind !== "special" || lot.special !== id) return null;
+      Object.assign(lot, { kind: null, special: null, level: 0, building: 0, coins: 0 });
+    } else {
+      const i = this.inventory.indexOf(id);
+      if (i < 0) return null;
+      this.inventory.splice(i, 1);
+    }
+    const v = this.sellValue(id);
+    this.coins += v.coins;
+    this.materials += v.materials;
+    return v;
   }
 
   // Puts a placed special back in the bag. The lot is empty again, ready for

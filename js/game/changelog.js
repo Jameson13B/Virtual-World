@@ -6,6 +6,14 @@
 
 const CHANGELOG = [
   {
+    version: "0.15.0",
+    notes: [
+      "🚒 Fire & police stations are much cheaper to build and upgrade",
+      "⬆️ Level 2 stations cover a bigger area and respond faster. Level 3 adds a second truck or car and responds faster still",
+      "💸 Don't want a special building? Sell it for a little 💰 and 🧱, from its sheet or from 🎒 Items",
+    ],
+  },
+  {
     version: "0.14.1",
     notes: [
       "🔢 The top bar fits on every phone again: big numbers are shortened (1.2K, 45.6M) instead of cut off",

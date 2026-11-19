@@ -469,8 +469,9 @@ class CityRenderer {
     const color = kind === "fire" ? "239,68,68" : "59,130,246";
     ctx.beginPath();
     for (const st of stations) {
-      ctx.moveTo(st.center.x + SERVICE_RADIUS, st.center.y);
-      ctx.arc(st.center.x, st.center.y, SERVICE_RADIUS, 0, Math.PI * 2);
+      const r = City.reach(st);
+      ctx.moveTo(st.center.x + r, st.center.y);
+      ctx.arc(st.center.x, st.center.y, r, 0, Math.PI * 2);
     }
     ctx.fillStyle = "rgba(" + color + ",0.16)";
     ctx.fill();
