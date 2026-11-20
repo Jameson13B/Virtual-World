@@ -9,6 +9,7 @@
 const LANE_OFFSET = ROAD_W / 4;
 const CORNER_R = 45;
 const CAR_GAP = 62; // bumper-to-bumper following distance (center to center)
+const QUEUE_GAP = 95; // how far apart (center to center) cars actually sit in a queue
 
 // ---------------------------------------------------------------------------
 // Intersections: every road point where 3 or more roads meet. Cars stop at the
@@ -23,6 +24,8 @@ const CAR_GAP = 62; // bumper-to-bumper following distance (center to center)
 // ---------------------------------------------------------------------------
 const STOP_BACK = 75; // shortest distance from the middle of an intersection to its stop lines
 const JUNCTION_LOOK = 170; // cars start asking this far before the stop line
+const SQUEEZE = 600; // frames waiting before a car squeezes into a full lane
+const REROUTE = 900; // frames waiting before a car gives up and turns another way
 const HESITATE = 40; // frames an uncontrolled intersection sits empty before the next car tries
 const STOP_FRAMES = { stop2: 20, stop4: 14 };
 const GREEN = { min: 150, max: 480, amber: 50 };
@@ -38,7 +41,7 @@ class Junction {
     this.inside = new Map(); // car → its move { from, to }
     this.asks = new Map(); // cars asking to cross this frame → { from, to, gap }
     this.alive = true;
-    this.calm = 0; // frames the box has been empty
+    this.calm = 0; // frames nobody has been driving through the box
     this.queue = 0; // cars waiting, smoothed over ~20 s
     this.worst = 0; // longest current wait, in frames
     this.phase = 0; // light: which group is green
@@ -112,7 +115,8 @@ class Junction {
     for (const [car] of this.inside) {
       if (car.done || car.parked || !car.grants.has(this) || distance(car, this.node) > STOP_BACK * 3) this.leave(car);
     }
-    if (this.inside.size) this.calm = 0;
+    // (A car stopped in the box, queuing onto its road, doesn't count.)
+    if ([...this.inside.keys()].some((c) => c.speed > 0.3)) this.calm = 0;
     else this.calm++;
     const asks = [...this.asks].filter(([car]) => !car.done && !car.parked);
     this.asks.clear();
@@ -132,8 +136,11 @@ class Junction {
     for (const [car, a] of asks) {
       if (!this.#turn(car, a, asks)) continue;
       // Sirens go as soon as they reach the line: other cars pull over.
-      if (car.rushing || this.#clear(a, held, cars)) this.enter(car, a);
-      else held.push(a);
+      const room = this.#room(a.to, cars, (car.jWait?.t || 0) > SQUEEZE);
+      if (car.rushing || (room && this.#clear(a, held))) this.enter(car, a);
+      // A car waiting for room on the road ahead doesn't hold anyone up: the
+      // cars that would make that room may need to get through first.
+      else if (room) held.push(a);
     }
   }
 
@@ -151,12 +158,13 @@ class Junction {
   }
 
   // Whether two moves' paths through the box cross (or end on the same
-  // road). Cars from the same road just follow each other.
-  #crosses(a, b) {
+  // road). Cars from the same road just follow each other. `wary`: without a
+  // sign or light, nobody shares the box.
+  #crosses(a, b, wary = !this.control) {
     if (a.from === b.from) return false;
-    if (a.to === b.to) return true;
-    // Without a sign or light, nobody shares the box.
-    if (!this.control) return true;
+    // A U-turn swings around the middle of the box, across everyone's path.
+    if (a.to === b.to || a.from === a.to || b.from === b.to) return true;
+    if (wary) return true;
     const end = (arm, out) => {
       const d = normalize(subtract(arm, this.node));
       return add(add(this.node, scale(d, ROAD_W / 2)), scale(perpendicular(out ? d : scale(d, -1)), LANE_OFFSET));
@@ -164,26 +172,42 @@ class Junction {
     return !!getIntersection(end(a.from, false), end(a.to, true), end(b.from, false), end(b.to, true));
   }
 
-  // Nothing in the way: no crossing path in the box or waiting its turn, and
-  // room on the road past the intersection.
-  #clear(a, held, cars) {
+  // Nothing in the way: no crossing path in the box or waiting its turn.
+  #clear(a, held) {
     let same = 0;
-    for (const [, b] of this.inside) {
-      if (this.#crosses(a, b)) return false;
+    // A car stopped in the box is queuing onto the road it's turning into, so
+    // anyone not crossing that path can still get by it.
+    for (const [car, b] of this.inside) {
+      if (this.#crosses(a, b, !this.control && car.speed > 0.3)) return false;
       if (b.to === a.to) same++;
     }
     for (const h of held) if (h.from === a.from || this.#crosses(a, h)) return false;
-    return same < 2 && this.#room(a.to, cars);
+    return same < 2;
   }
 
-  // Room on the road `to` past the intersection: no stopped car near its start.
-  #room(to, cars) {
+  // Room on the road `to` past the intersection: no stopped car near its
+  // start, and its lane isn't already as full as it can get. (Cars still
+  // rolling into a full lane stop in a moment, and one let in behind them
+  // would be left blocking the box.) After a long wait a driver squeezes into
+  // a full lane anyway if there's a gap at its start.
+  #room(to, cars, squeeze = false) {
     const dir = normalize(subtract(to, this.node)), side = perpendicular(dir), back = this.back.get(to) || STOP_BACK;
-    const len = Math.min(distance(to, this.node), back + CAR_GAP + 10);
+    const road = distance(to, this.node);
+    const near = Math.min(road, back + CAR_GAP + 10);
+    // The lane holds cars from just past our stop line to the far end's stop line.
+    const far = road - (this.all?.get(to)?.back.get(this.node) || 0);
+    const fits = Math.max(1, Math.floor((far - back + 25) / QUEUE_GAP));
+    const minX = Math.min(this.node.x, to.x) - 40, maxX = Math.max(this.node.x, to.x) + 40;
+    const minY = Math.min(this.node.y, to.y) - 40, maxY = Math.max(this.node.y, to.y) + 40;
+    let inLane = 0;
     for (const o of cars) {
-      if (o.parked || o.speed > 1.2 || Math.abs(o.x - this.node.x) > len + 40 || Math.abs(o.y - this.node.y) > len + 40) continue;
+      if (o.parked || o.x < minX || o.x > maxX || o.y < minY || o.y > maxY) continue;
+      // (A car in the box turning onto another road isn't in this lane.)
+      if (this.inside.has(o) && this.inside.get(o).to !== to) continue;
       const v = subtract(o, this.node), along = dot(v, dir), across = dot(v, side);
-      if (along > back - 25 && along < len && Math.abs(across - LANE_OFFSET) < 18) return false;
+      if (along < back - 25 || along > far + 10 || Math.abs(across - LANE_OFFSET) > 18) continue;
+      if (o.speed <= 1.2 && along < near) return false;
+      if (++inLane >= fits && !squeeze) return false;
     }
     return true;
   }
@@ -197,7 +221,8 @@ class Junction {
     switch (this.control) {
       case "stop2":
         if (this.isMain(a.from)) return a.gap < 45;
-        return a.gap < 14 && w.stopped >= STOP_FRAMES.stop2 && !asks.some(([o, b]) => o !== car && this.isMain(b.from) && b.gap < 90 && this.#crosses(a, b));
+        // (A main-road car stopped at the line is stuck, not coming.)
+        return a.gap < 14 && w.stopped >= STOP_FRAMES.stop2 && !asks.some(([o, b]) => o !== car && this.isMain(b.from) && b.gap < 90 && o.speed > 0.3 && this.#crosses(a, b));
       case "stop4":
         return a.gap < 14 && w.stopped >= STOP_FRAMES.stop4;
       case "light":
@@ -228,6 +253,7 @@ function syncJunctions(graph, controls = {}) {
       next.set(p, j && j.arms.length === arms.length ? j : new Junction(p, arms));
     }
     for (const [p, j] of old) if (next.get(p) !== j) j.alive = false;
+    for (const j of next.values()) j.all = next;
     graph.junctions = next;
     graph.junctionsVersion = graph.version;
   }
@@ -281,6 +307,14 @@ class TownCar extends Car {
     const goal = this.destination(from, to);
     if (goal) {
       const path = this.graph.getShortestPath(to, goal);
+      // Only turn around at a dead end or an intersection: a U-turn halfway
+      // along a road cuts across the other lane, and a queue there can leave
+      // it stuck for good. Carry on to the next one instead.
+      const ways = path[1] === from ? this.graph.segments.filter((s) => s.includes(to)) : [];
+      if (ways.length === 2) {
+        const on = ways.find((s) => !s.includes(from));
+        if (on) return [to, on.p1 === to ? on.p2 : on.p1];
+      }
       if (path.length >= 2) return path;
     }
     const pts = this.graph.points;
@@ -399,8 +433,9 @@ class TownCar extends Car {
   // The speed limit from the next intersection: free once let in, else a
   // gentle stop at the stop line while asking to cross.
   #intersection() {
+    // Out once past it (not counting coming back through it later on).
     for (const g of this.grants) {
-      if (!this.crossings.some((c) => c.j === g && c.sOut > this.s) && distance(this, g.node) > STOP_BACK - 10) g.leave(this);
+      if (!this.crossings.some((c) => c.j === g && c.sOut > this.s && c.sIn - JUNCTION_LOOK < this.s) && distance(this, g.node) > STOP_BACK - 10) g.leave(this);
     }
     this.stopAt = Infinity;
     const next = this.crossings.find((c) => c.sOut > this.s && !this.grants.has(c.j));
@@ -412,6 +447,12 @@ class TownCar extends Car {
       return Infinity;
     }
     if (gap > JUNCTION_LOOK) return Infinity;
+    const w = this.jWait;
+    if (w && w.j === next.j && gap < 20 && !this.rushing && w.t > (w.rerouted || 0) + REROUTE) {
+      w.rerouted = w.t;
+      this.#reroute(next);
+      return 0;
+    }
     next.j.ask(this, next, gap);
     this.stopAt = gap;
     // Without a sign, everyone slows down to look.
@@ -419,12 +460,28 @@ class TownCar extends Car {
     return Math.min(slow, clamp((gap - 3) * 0.07, 0, this.maxSpeed));
   }
 
-  // True when the cars this one waits for end up waiting for it.
+  // Fed up with waiting at an intersection: turn another way instead (back
+  // the way it came only if there's no other).
+  #reroute(c) {
+    const ways = c.j.arms.filter((a) => a !== c.to && a !== c.from);
+    const alt = ways.length ? ways[Math.floor(Math.random() * ways.length)] : c.from;
+    if (alt === c.to) return;
+    this.#build([c.from, c.j.node, ...this.#route(c.j.node, alt)]);
+    const dir = normalize(subtract(c.j.node, c.from));
+    this.s = Math.max(0, dot(subtract(this, add(c.from, scale(perpendicular(dir), LANE_OFFSET))), dir));
+  }
+
+  // True when the cars this one waits for end up waiting for it, following
+  // cars held at an intersection to the cars in its way there.
   #waitCircle() {
-    let o = this.waitingFor;
-    for (let i = 0; i < 8 && o; i++) {
-      if (o === this) return true;
-      o = o.waitingFor;
+    const seen = new Set(), todo = [this];
+    while (todo.length && seen.size < 80) {
+      const o = todo.pop();
+      const next = o.waitingFor ? [o.waitingFor] : o.jWait ? [...o.jWait.j.inside.keys()] : [];
+      for (const n of next) {
+        if (n === this) return true;
+        if (!seen.has(n)) seen.add(n), todo.push(n);
+      }
     }
     return false;
   }

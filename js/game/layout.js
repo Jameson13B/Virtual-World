@@ -14,6 +14,7 @@ const LOT_DEPTH = 120;
 const LOT_GAP = 20;
 const NODE_MARGIN = 72; // lots keep this far from junctions so roads can branch
 const ROAD_GAP = 400; // min distance between unrelated roads (fits two rows of lots)
+const THROUGH_GAP = 230; // the same for a road inside town (fits one row)
 
 function hashInts(...nums) {
   let h = 0x811c9dc5;
@@ -75,7 +76,8 @@ class CityLayout {
   constructor(seed, graphInfo = null, terrain = new Terrain("classic", seed)) {
     this.seed = seed;
     this.terrain = terrain;
-    this.lots = [];
+    this.allLots = []; // every lot ever made, in order (saves index into this)
+    this.lots = []; // the ones still there: a road through town paves over a few
     this.roadRects = [];
     if (graphInfo) {
       // Rebuild lots in road order, exactly as they were created during play.
@@ -102,8 +104,22 @@ class CityLayout {
 
   #attach(seg) {
     this.graph.addSegment(seg);
-    this.roadRects.push(rectAround(seg.p1, seg.p2, ROAD_W / 2 + LOT_GAP / 2));
+    const rect = rectAround(seg.p1, seg.p2, ROAD_W / 2 + LOT_GAP / 2);
+    this.roadRects.push(rect);
+    // A road cut through town paves over the (empty) lots in its way.
+    const paved = this.#lotsIn(rect);
+    for (const lot of paved) lot.gone = true;
+    if (paved.length) this.lots = this.allLots.filter((l) => !l.gone);
     this.#lotsFor(seg, this.graph.segments.length - 1);
+  }
+
+  // The lots a road from a to b would pave over.
+  lotsInWay(a, b) {
+    return this.#lotsIn(rectAround(a, b, ROAD_W / 2 + LOT_GAP / 2));
+  }
+
+  #lotsIn(rect) {
+    return this.lots.filter((lot) => boundsOverlap(lot.poly.bounds, rect.bounds) && (lot.poly.intersectsPoly(rect) || rect.containsPoint(lot.center)));
   }
 
   degree(p) {
@@ -127,8 +143,11 @@ class CityLayout {
     }
     const options = [];
     if (!pool.length) return options;
+    // Some options are roads inside town that join two existing roads, the
+    // rest grow the town outward.
+    const inner = count > 1 ? this.#innerRoads(rng, Math.floor(count / 2)) : [];
 
-    for (let attempt = 0; attempt < 160 * count && options.length < count; attempt++) {
+    for (let attempt = 0; attempt < 160 * count && options.length < count - inner.length; attempt++) {
       const a = pool[Math.floor(rng() * pool.length)];
       const dirs = this.incidentDirs(a);
       let base, jitter;
@@ -157,24 +176,60 @@ class CityLayout {
       // Options must be clearly different roads, not the same one twice.
       const mid = average(a, end);
       if (options.some((o) => distance(average(o.a, o.b), mid) < 260)) continue;
-      options.push({ a, b: end, connects: snapped, lots: this.previewLots(a, end) });
+      options.push({ a, b: end, inside: false, lots: this.previewLots(a, end) });
     }
+    for (const o of inner) options.push({ a: o.a, b: o.b, inside: true, lots: this.previewLots(o.a, o.b) });
     return options;
+  }
+
+  // Up to `n` roads joining two existing roads inside town, each saving a
+  // longer way round. They may pave over empty lots, never built ones.
+  #innerRoads(rng, n) {
+    const g = this.graph, found = [];
+    for (const a of g.points) {
+      if (this.degree(a) >= 4) continue;
+      for (const e of g.points) {
+        if (e === a || this.degree(e) >= 4 || a.x > e.x || (a.x === e.x && a.y >= e.y)) continue;
+        const d = distance(a, e);
+        if (d < 300 || d > 800 || !this.isValidRoad(a, e, true, true)) continue;
+        const path = g.getShortestPath(a, e);
+        let around = Infinity;
+        if (path.length >= 2) {
+          around = 0;
+          for (let i = 1; i < path.length; i++) around += distance(path[i - 1], path[i]);
+        }
+        if (around > d * 1.5) found.push({ a, b: e, save: around / d });
+      }
+    }
+    // Picked at random from the best few, and clearly different from each other.
+    found.sort((x, y) => y.save - x.save);
+    const best = found.slice(0, 3 * n), picked = [];
+    while (best.length && picked.length < n) {
+      const o = best.splice(Math.floor(rng() * best.length), 1)[0];
+      const mid = average(o.a, o.b);
+      if (!picked.some((p) => distance(average(p.a, p.b), mid) < 260)) picked.push(o);
+    }
+    return picked;
   }
 
   // The lots a road from a to b would open, without keeping the road.
   previewLots(a, b) {
-    const g = this.graph, before = { points: g.points.length, lots: this.lots.length, version: g.version };
+    const g = this.graph, before = { points: g.points.length, lots: this.allLots.length, live: this.lots.slice(), version: g.version };
+    const paved = this.lotsInWay(a, b);
     const lots = this.addRoad(a, b).map((l) => l.poly);
+    for (const lot of paved) lot.gone = false;
     g.segments.pop();
     g.points.length = before.points;
     g.version = before.version;
     this.roadRects.pop();
-    this.lots.length = before.lots;
+    this.allLots.length = before.lots;
+    this.lots = before.live;
     return lots;
   }
 
-  isValidRoad(a, e, snapped) {
+  // `through`: a road inside town, which may run closer to other roads
+  // and pave over empty lots.
+  isValidRoad(a, e, snapped, through = false) {
     if (distance(a, e) < 300) return false;
     const dir = normalize(subtract(e, a));
     if (this.incidentDirs(a).some((d) => dot(d, dir) > 0.5)) return false;
@@ -189,22 +244,18 @@ class CityLayout {
       const touchesA = s.includes(a);
       const touchesE = snapped && s.includes(e);
       if (touchesA || touchesE) continue;
-      if (segmentDistance(seg, s) < ROAD_GAP) return false;
+      if (segmentDistance(seg, s) < (through ? THROUGH_GAP : ROAD_GAP)) return false;
     }
-    const clearance = rectAround(a, e, ROAD_W / 2 + LOT_GAP / 2);
-    for (const lot of this.lots) {
-      if (!boundsOverlap(lot.poly.bounds, clearance.bounds)) continue;
-      if (lot.poly.intersectsPoly(clearance) || clearance.containsPoint(lot.center)) return false;
-    }
+    for (const lot of this.lotsInWay(a, e)) if (!through || lot.kind || lot.building > 0) return false;
     return true;
   }
 
   addRoad(a, b) {
     const pa = this.graph.containsPoint(a) || this.#newPoint(a);
     const pb = this.graph.containsPoint(b) || this.#newPoint(b);
-    const before = this.lots.length;
+    const before = this.allLots.length;
     this.#attach(new Segment(pa, pb));
-    return this.lots.slice(before);
+    return this.allLots.slice(before);
   }
 
   #newPoint(p) {
@@ -236,7 +287,11 @@ class CityLayout {
           add(q1, scale(n, -hd)), add(q1, scale(n, hd)),
           add(q2, scale(n, hd)), add(q2, scale(n, -hd)),
         ]);
-        if (this.#lotFits(poly)) this.lots.push(new Lot(this.lots.length, poly, index));
+        if (this.#lotFits(poly)) {
+          const lot = new Lot(this.allLots.length, poly, index);
+          this.allLots.push(lot);
+          this.lots.push(lot);
+        }
         t += L + LOT_GAP;
       }
     }

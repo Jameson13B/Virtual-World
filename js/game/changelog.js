@@ -6,6 +6,14 @@
 
 const CHANGELOG = [
   {
+    version: "0.16.1",
+    notes: [
+      "🚗 Fixed traffic locking up for good: cars no longer turn around in the middle of a road or pull into a road that's already full, a car waiting for space doesn't hold up the cars that would make it, and drivers stuck for a while turn another way",
+      "🏘️ Road choices now include roads inside town that join two roads, not just roads that grow the town outward. A road inside town can pave over a few empty lots, never buildings",
+      "🌆 From Metropolis on, you get 4 roads to choose from",
+    ],
+  },
+  {
     version: "0.16.0",
     notes: [
       "🚦 Intersections! Tap where roads meet to add a 🛑 2-way stop, ✋ 4-way stop or 🚦 traffic light",

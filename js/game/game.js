@@ -6,7 +6,7 @@
 const $ = (sel) => document.querySelector(sel);
 const SAVE_KEY = "vw.city";
 const PREFS_KEY = "vw.gamePrefs";
-const VERSION = "0.16.0";
+const VERSION = "0.16.1";
 
 const canvas = $("#cityCanvas");
 const ctx = canvas.getContext("2d");
@@ -603,6 +603,7 @@ function onTap(world, screen) {
   }
 
   const lot = active.renderer.lotAt(world, screen);
+  if (lot && (ui.moving || ui.placeStation || ui.placing) && city.inRoadWay(lot)) return toast("🚧 The new road is going through here");
   if (ui.moving) return moveTo(lot);
   if (ui.placeStation) {
     if (!lot) return toast("Tap an empty lot, or a building to replace");
@@ -1106,10 +1107,10 @@ function renderRoadBanner() {
   const opts = city.roadChoice || [];
   $("#roadOptions").innerHTML = opts.map((o, i) =>
     "<button data-road='" + i + "' class='road-opt" + (ui.roadPick === i ? " on" : "") + "'><b>" + (i + 1) + "</b>" +
-    "<span>" + o.lots + " lots" + (o.connects ? " · 🔁" : "") + "</span></button>").join("");
+    "<span>" + (o.inside ? "🏘️ In town" : "🌲 New area") + " · " + o.lots + " lots</span></button>").join("");
   $("#roadOptions").querySelectorAll("[data-road]").forEach((btn) =>
     btn.addEventListener("click", () => startRoadPick(+btn.dataset.road)));
-  $("#roadHint").textContent = opts.some((o) => o.connects) ? "🔁 = joins up with another road" : "Each road costs the same";
+  $("#roadHint").textContent = "Each road costs the same";
   $("#roadBanner").hidden = false;
   updateRoadBuild();
 }
@@ -1128,7 +1129,10 @@ function stopRoadPick() {
 $("#roadCancel").addEventListener("click", stopRoadPick);
 $("#roadBuild").addEventListener("click", () => {
   const i = ui.roadPick;
-  if (!city.chooseRoad(i)) return;
+  if (!city.chooseRoad(i)) {
+    if (!city.roadChoice) toast("🏠 Something was built in that road's way, so here are new roads");
+    return;
+  }
   stopRoadPick();
   toast("🚧 Construction crews started road " + (i + 1));
   buzz(40);

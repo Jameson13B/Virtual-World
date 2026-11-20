@@ -65,7 +65,7 @@ const CONTROL_IDS = Object.keys(CONTROLS);
 
 // Factories start appearing at Town, as about 1 in 4 of the job buildings.
 const INDUSTRY_TIER = 2;
-const THREE_ROADS_TIER = 3; // City: pick from 3 roads instead of 2
+const ROAD_CHOICES = [2, 2, 2, 3, 4]; // roads to pick from by tier: 3 from City, 4 from Metropolis
 const INDUSTRY_SHARE = 0.25;
 
 const NAME_PARTS = {
@@ -91,6 +91,7 @@ function marketPeriod(d = new Date()) {
 const randomSeed = () => (Math.random() * 4294967296) >>> 0;
 
 class City {
+  #way = null; // the lots the road being built will pave over
   constructor({ seed, name, graph = null, map = "classic" }) {
     this.seed = seed;
     this.name = name || cityNameFromSeed(seed);
@@ -147,7 +148,16 @@ class City {
 
   // Empty lots with nothing being built on them.
   openLots() {
-    return this.lots.filter((l) => !l.kind && l.building <= 0);
+    return this.lots.filter((l) => !l.kind && l.building <= 0 && !this.inRoadWay(l));
+  }
+
+  // Whether the road being built will pave over this (empty) lot, so nothing
+  // can go on it meanwhile.
+  inRoadWay(lot) {
+    const job = this.roadJob;
+    if (!job) return false;
+    if (this.#way?.job !== job) this.#way = { job, lots: new Set(this.layout.lotsInWay(job.a, job.b)) };
+    return this.#way.lots.has(lot);
   }
 
   get capacity() {
@@ -334,7 +344,7 @@ class City {
 
   // Builds a station on an empty lot or in place of a home, shop or factory.
   buildStation(lot, kind, { free = false, level = 1 } = {}) {
-    if (!lot || lot.kind === "special" || lot.kind === "svc") return false;
+    if (!lot || lot.kind === "special" || lot.kind === "svc" || this.inRoadWay(lot)) return false;
     const cost = free ? 0 : this.stationCost(kind);
     if (this.coins < cost) return false;
     if (lot.kind === "com" || lot.kind === "ind") this.#payOut(lot);
@@ -516,9 +526,9 @@ class City {
         events.push({ type: "road", lots: lots.length });
       }
     } else if (!this.roadChoice && this.materials >= this.roadCost()) {
-      const options = this.layout.roadOptions(this.tierReached >= THREE_ROADS_TIER ? 3 : 2);
+      const options = this.layout.roadOptions(ROAD_CHOICES[Math.min(this.tierReached, ROAD_CHOICES.length - 1)]);
       if (options.length) {
-        this.roadChoice = options.map((o) => ({ a: { x: o.a.x, y: o.a.y }, b: { x: o.b.x, y: o.b.y }, lots: o.lots.length, connects: o.connects }));
+        this.roadChoice = options.map((o) => ({ a: { x: o.a.x, y: o.a.y }, b: { x: o.b.x, y: o.b.y }, lots: o.lots.length, inside: o.inside }));
         this.version++;
         events.push({ type: "roadChoice" });
       }
@@ -640,6 +650,13 @@ class City {
   chooseRoad(i) {
     const o = this.roadChoice?.[i];
     if (!o || this.roadJob || this.materials < this.roadCost()) return false;
+    // Something was built in the way of a road inside town since it was
+    // offered: offer new roads instead.
+    if (this.layout.lotsInWay(o.a, o.b).some((l) => l.kind || l.building > 0)) {
+      this.roadChoice = null;
+      this.version++;
+      return false;
+    }
     this.materials -= this.roadCost();
     this.roadJob = { a: o.a, b: o.b, t: 0, duration: this.roadDuration() };
     this.roadChoice = null;
@@ -649,7 +666,7 @@ class City {
 
   // Builds a home, shop or factory from the bag on an empty lot.
   placeBuilding(lot, kind, rand = Math.random) {
-    if (!lot || lot.kind || lot.building > 0 || !(this.plots[kind] > 0)) return false;
+    if (!lot || lot.kind || lot.building > 0 || this.inRoadWay(lot) || !(this.plots[kind] > 0)) return false;
     this.plots[kind]--;
     Object.assign(lot, { kind, special: null, level: 1, building: 10 + rand() * 10, coins: 0 });
     return true;
@@ -713,7 +730,7 @@ class City {
   // shop or factory was holding is collected first.
   placeSpecial(lot, id) {
     const i = this.inventory.indexOf(id);
-    if (i < 0 || !lot || lot.kind === "special" || lot.kind === "svc") return false;
+    if (i < 0 || !lot || lot.kind === "special" || lot.kind === "svc" || this.inRoadWay(lot)) return false;
     if (SPECIALS[id].station) {
       if (!this.buildStation(lot, SPECIALS[id].station, { free: true, level: 2 })) return false;
       this.inventory.splice(i, 1);
@@ -769,7 +786,7 @@ class City {
   }
 
   moveBuilding(from, to) {
-    if (!this.canMove(from) || !to || to === from || to.building > 0 || to.incident) return false;
+    if (!this.canMove(from) || !to || to === from || to.building > 0 || to.incident || this.inRoadWay(to)) return false;
     const fields = ["kind", "special", "level", "building", "coins", "visits"];
     const a = {}, b = {};
     for (const f of fields) [a[f], b[f]] = [from[f], to[f]];
@@ -836,7 +853,7 @@ class City {
       map: this.map,
       name: this.name,
       graph: this.layout.graph.toJSON(),
-      lots: this.lots.map((l) => [l.kind || 0, l.level, +l.building.toFixed(1), +l.coins.toFixed(2), l.special || 0]),
+      lots: this.layout.allLots.map((l) => [l.kind || 0, l.level, +l.building.toFixed(1), +l.coins.toFixed(2), l.special || 0]),
       materials: this.materials,
       coins: this.coins,
       pop: this.pop,
@@ -861,7 +878,7 @@ class City {
   static fromSave(data) {
     const city = new City({ seed: data.seed, name: data.name, graph: data.graph, map: data.map });
     (data.lots || []).forEach((s, i) => {
-      const lot = city.lots[i];
+      const lot = city.layout.allLots[i];
       if (!lot) return;
       lot.kind = s[0] || null;
       lot.level = s[1];
@@ -886,7 +903,7 @@ class City {
   toShareCode() {
     const g = this.layout.graph;
     const index = new Map(g.points.map((p, i) => [p, i]));
-    const lotChars = this.lots.map((l) => {
+    const lotChars = this.layout.allLots.map((l) => {
       if (!l.kind || l.effectiveLevel < 1) return ".";
       if (l.kind === "res") return "abc"[l.effectiveLevel - 1];
       if (l.kind === "com") return "ABC"[l.effectiveLevel - 1];
@@ -919,7 +936,7 @@ class City {
     for (let i = 0; i < data.e.length; i += 2) segs.push({ p1: pts[data.e[i]], p2: pts[data.e[i + 1]] });
     const city = new City({ seed: data.s, name: data.n, graph: { points: pts, segments: segs }, map: data.m });
     [...data.l].forEach((ch, i) => {
-      const lot = city.lots[i];
+      const lot = city.layout.allLots[i];
       if (!lot || ch === ".") return;
       if ("abc".includes(ch)) Object.assign(lot, { kind: "res", level: "abc".indexOf(ch) + 1 });
       else if ("ABC".includes(ch)) Object.assign(lot, { kind: "com", level: "ABC".indexOf(ch) + 1 });

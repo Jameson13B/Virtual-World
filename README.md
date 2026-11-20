@@ -12,7 +12,7 @@ Its roads, buildings and rendering engine come from freeCodeCamp's
 ```
 📷 scan codes / 🎁 daily gift / 🏪 market
         ↓  🧱 materials
-🛣️ pick your next road from 2 options (3 from City); each player's road network is unique
+🛣️ pick your next road from 2 options (3 from City, 4 from Metropolis), some inside town, some growing it; each player's road network is unique
         ↓  new empty lots
 🎒 the town sends the 🏠 homes, 🏪 shops and 🏭 factories it needs (homes need jobs, shops need customers)
         ↓  you pick the empty lot for each one
@@ -27,7 +27,7 @@ Its roads, buildings and rendering engine come from freeCodeCamp's
 - **Fire & police:** from Town on, emergencies break out while you play. Stations cost about 10 minutes of income to build. Level 2 (20 minutes of income) widens the coverage circle and responds faster; level 3 (45 minutes) adds a second vehicle and responds faster still.
 - **Factories:** from Town (40 people) on, about 1 in 4 job buildings is a 🏭 factory. Factories fill up with 🧱 and show a 📦 crate to tap, a small boost on top of scanning.
 - **Traffic:** cars are residents on real trips that follow the phone's clock: home → work in the morning, errands at lunch, work → home in the evening, parks and specials at night. They pull out of one building and disappear into another. A shopper who stops at a shop spends 💰 (1 per shop level) into its bag. Tap a car to see who's driving and follow it. Stuck cars wait in line instead of jumping elsewhere, and they pull over for fire trucks and police.
-- **Intersections:** wherever 3 or more roads meet. Without signs, drivers slow right down and hesitate when two roads both have cars, so busy ones back up (a 🚗 marker shows the jam). Tap one to add a 🛑 2-way stop (main road keeps moving), ✋ 4-way stop (everyone takes turns) or 🚦 traffic light (the main road and side roads take turns on green). Each costs a few minutes of income plus a little 🧱. A car only enters when there's room on the road ahead, so jams are queues, never knots. The 🚦 Traffic map view colors every intersection by how busy it is.
+- **Intersections:** wherever 3 or more roads meet. Without signs, drivers slow right down and hesitate when two roads both have cars, so busy ones back up (a 🚗 marker shows the jam). Tap one to add a 🛑 2-way stop (main road keeps moving), ✋ 4-way stop (everyone takes turns) or 🚦 traffic light (the main road and side roads take turns on green). Each costs a few minutes of income plus a little 🧱. A car only enters when there's room on the road ahead (its lane isn't already full), cars only turn around at dead ends and intersections, and a driver stuck at one for 15 s turns another way, so jams are queues, never knots. The 🚦 Traffic map view colors every intersection by how busy it is.
 - **😊 Happiness:** for now it's all traffic: the share of driving time cars spend stuck (up to 20% is normal, 70% is miserable). Happy towns grow faster and pay more taxes (×1.1 at 100%, ×0.5 at 0%).
 - **Tiers:** Hamlet → Village (10 people) → Town (40) → City (120) → Metropolis (400) → Megalopolis (1,000) → Metroplex (2,500) → Capital (5,000) → Global City (10,000).
 - **Offline progress:** the town keeps working for 15 minutes after the player's last tap, open or closed, then rests until they're back.
@@ -98,6 +98,9 @@ sandbox.html + js/main.js    the original editor/driving/AI sandbox (hidden extr
 
 `CityLayout.roadOptions()` proposes the k-th road's options from the town's seed and the roads that already exist;
 the player's pick is saved in the road graph. A pending choice waits (even offline) until the player picks.
+Once the town has blocks, some options are 🏘️ roads inside town joining two existing roads; they may pave over
+empty lots (never built ones), so that option also depends on which lots are built. Paved lots keep their place in the
+save's lot list, and rebuilding the roads in order paves the same ones.
 Its geometry, and the terrain from the town's map type and seed, use only `+ - * /`, `sqrt` and `floor`, which give identical results on every device,
 so a town rebuilt from a share code matches on any phone. Share codes also carry the road graph itself,
 so future changes to the growth algorithm won't break old links.
