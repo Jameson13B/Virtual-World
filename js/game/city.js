@@ -53,6 +53,16 @@ const SAFETY_GRACE = 600; // seconds of play before the first emergency
 // The town only runs while the player is around, and for this long after their last tap.
 const ACTIVE_GRACE = 15 * 60 * 1000;
 
+// Intersection controls (the junction logic is in traffic.js). Each costs a
+// few minutes of income plus a share of a road's 🧱; a better one replaces
+// the old one at full price.
+const CONTROLS = {
+  stop2: { icon: "🛑", name: "2-way stop", minutes: 5, share: 0.05, min: 50, about: "The main road keeps moving; cars on the side roads stop and wait for a gap." },
+  stop4: { icon: "✋", name: "4-way stop", minutes: 10, share: 0.1, min: 100, about: "Everyone stops, then cars take turns in the order they arrived. Fair when every road is busy." },
+  light: { icon: "🚦", name: "Traffic light", minutes: 20, share: 0.2, min: 250, about: "The main road and the side roads take turns on green. Moves the most cars." },
+};
+const CONTROL_IDS = Object.keys(CONTROLS);
+
 // Factories start appearing at Town, as about 1 in 4 of the job buildings.
 const INDUSTRY_TIER = 2;
 const THREE_ROADS_TIER = 3; // City: pick from 3 roads instead of 2
@@ -107,6 +117,8 @@ class City {
     this.safetyGrace = SAFETY_GRACE;
     this.incidents = []; // live emergencies (never saved: they only happen while playing)
     this.unpaid = false; // couldn't pay station upkeep, so the stations stopped responding
+    this.controls = {}; // intersection (junctionKey) → control type
+    this.congestion = 0; // share of driving time spent stuck in traffic, smoothed (0…1)
   }
 
   // A brand new city: one road, one house, one shop, middle of nowhere. `map`
@@ -156,6 +168,50 @@ class City {
       if (l.kind === "special" && l.building <= 0) a += SPECIALS[l.special]?.appeal || 0;
     }
     return Math.max(0.5, a + this.safetyAppeal());
+  }
+
+  // ---- 😊 happiness -----------------------------------------------------------
+  // How people feel about living here. For now it's all traffic: up to 20% of
+  // driving time stuck is normal, and by 70% everyone's fed up.
+  get happiness() {
+    return clamp(1 - (this.congestion - 0.2) / 0.5, 0, 1);
+  }
+
+  // Happy towns grow faster and pay more taxes: ×1.1 at 100%, ×0.5 at 0%.
+  happyFactor() {
+    return 0.5 + 0.6 * this.happiness;
+  }
+
+  // The game measures traffic while it runs: `stuck` is the share of driving
+  // cars stuck right now; it's smoothed over about a minute.
+  sampleTraffic(stuck, dt) {
+    this.congestion += (clamp(stuck, 0, 1) - this.congestion) * Math.min(1, dt / 60);
+  }
+
+  // ---- intersections ------------------------------------------------------------
+  controlCost(type) {
+    const c = CONTROLS[type];
+    return {
+      coins: Math.round(Math.max(c.min, this.incomeRate() * 60 * c.minutes) / 10) * 10,
+      materials: Math.max(1, Math.round(this.roadCost() * c.share)),
+    };
+  }
+
+  // Puts a control on the intersection `key` (replacing any other).
+  buildControl(key, type) {
+    if (!CONTROLS[type] || this.controls[key] === type) return false;
+    const cost = this.controlCost(type);
+    if (this.coins < cost.coins || this.materials < cost.materials) return false;
+    this.coins -= cost.coins;
+    this.materials -= cost.materials;
+    this.controls[key] = type;
+    return true;
+  }
+
+  removeControl(key) {
+    if (!this.controls[key]) return false;
+    delete this.controls[key];
+    return true;
   }
 
   // ---- fire & police -------------------------------------------------------
@@ -236,7 +292,7 @@ class City {
   incomeRate() {
     let shops = 0;
     for (const l of this.lots) if (l.kind === "com" && l.building <= 0) shops += l.level;
-    return this.pop * 0.003 + shops * 0.03 * this.appealBase();
+    return this.pop * 0.003 * this.happyFactor() + shops * 0.03 * this.appealBase();
   }
 
   appealBase() {
@@ -508,10 +564,10 @@ class City {
     }
 
     // People move in while there's housing; taxes trickle in.
-    const cap = this.capacity;
-    if (this.pop < cap) this.pop = Math.min(cap, this.pop + dt * 0.04 * appeal * (1 + cap * 0.002));
+    const cap = this.capacity, happy = this.happyFactor();
+    if (this.pop < cap) this.pop = Math.min(cap, this.pop + dt * 0.04 * appeal * happy * (1 + cap * 0.002));
     else this.pop = Math.max(cap, this.pop - dt * 0.5);
-    this.coins += dt * this.pop * 0.003;
+    this.coins += dt * this.pop * 0.003 * happy;
 
     // Station upkeep. Without the coins for it, stations stop responding until
     // there's a minute of upkeep in the bank again.
@@ -797,6 +853,8 @@ class City {
       lastSeen: Date.now(),
       lastActive: this.lastActive,
       safetyGrace: this.safetyGrace,
+      controls: this.controls,
+      congestion: this.congestion,
     };
   }
 
@@ -811,7 +869,7 @@ class City {
       lot.coins = s[3];
       lot.special = s[4] || null;
     });
-    for (const k of ["materials", "coins", "pop", "roadJob", "roadChoice", "inventory", "plots", "scanned", "daily", "market", "tierReached", "stats", "createdAt", "lastSeen", "lastActive", "safetyGrace"]) {
+    for (const k of ["materials", "coins", "pop", "roadJob", "roadChoice", "inventory", "plots", "scanned", "daily", "market", "tierReached", "stats", "createdAt", "lastSeen", "lastActive", "safetyGrace", "controls", "congestion"]) {
       if (data[k] !== undefined) city[k] = data[k];
     }
     if (data.lastActive === undefined) city.lastActive = city.lastSeen;
@@ -846,6 +904,7 @@ class City {
       l: lotChars,
       u: Math.floor(this.pop),
       c: this.createdAt,
+      j: this.controls,
     };
     const json = JSON.stringify(data);
     return btoa(unescape(encodeURIComponent(json))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
@@ -871,6 +930,7 @@ class City {
     });
     city.pop = data.u || 0;
     city.createdAt = data.c || Date.now();
+    city.controls = data.j || {};
     return city;
   }
 }

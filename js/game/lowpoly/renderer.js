@@ -11,6 +11,7 @@ import { Ground, Water, elevation } from "./ground.js";
 import { RoadLayer } from "./roads3d.js";
 import { Forest } from "./trees3d.js";
 import { Traffic } from "./vehicles3d.js";
+import { Signals } from "./signals3d.js";
 import { buildModel } from "./models3d.js";
 import { Overlay, LEVEL_COLORS, ZONE_COLORS } from "./overlay.js";
 import { rgb } from "./kit.js";
@@ -190,6 +191,8 @@ export class LowPolyRenderer {
     this.scene.add(this.forest.group);
     this.traffic = new Traffic(this.ground, city.terrain, this.glowMat);
     this.scene.add(this.traffic.group);
+    this.signals = new Signals(this.ground, this.bodyMat);
+    this.scene.add(this.signals.group);
 
     this.lotGroup = new THREE.Group();
     this.scene.add(this.lotGroup);
@@ -219,6 +222,7 @@ export class LowPolyRenderer {
   pickMarker(world, screen) {
     const t = this.overlay.hit(screen);
     if (!t || t.choice != null) return null;
+    if (t.junction) return { junction: t.junction };
     return t.incident ? { incident: true, lot: t.lot } : { bubble: true, lot: t.lot };
   }
 
@@ -274,6 +278,7 @@ export class LowPolyRenderer {
     this.roads.dispose();
     this.forest.dispose();
     this.traffic.dispose();
+    this.signals.dispose();
     this.#disposeSlabs();
     for (const b of this.buildings.values()) this.lotGroup.remove(b.group);
     this.buildings.clear();
@@ -282,7 +287,7 @@ export class LowPolyRenderer {
   }
 
   // ---- per-frame drawing ------------------------------------------------------------
-  draw(ctx, viewport, { placing = false, roadPick = -1, selected = null, cars = [], player = null, floaters = [], now = 0, coverage = null } = {}) {
+  draw(ctx, viewport, { placing = false, roadPick = -1, selected = null, cars = [], player = null, floaters = [], now = 0, coverage = null, junctions = [] } = {}) {
     const t0 = performance.now();
     const city = this.city, stage = this.stage;
     this.viewport = viewport;
@@ -308,6 +313,7 @@ export class LowPolyRenderer {
     this.roads.updatePending(city.roadJob, now);
     this.roads.updateChoices(city.roadChoice || [], roadPick, now, !placing);
     this.traffic.update(player ? [...cars, player] : cars, now);
+    this.signals.update(junctions);
     this.#updateEffects(now);
 
     // far out, shadows are too blurry to be worth their cost
@@ -325,6 +331,7 @@ export class LowPolyRenderer {
       width: viewport.width, height: viewport.height, city, markers: this.markers, z: viewport.zoom, now, lens,
       project: (x, h, y) => stage.toScreen(x, h, y), choices, roadPick, floaters,
       showChoices: choices.length > 0 && !placing, placing, visiting: !!this.opts.readOnly,
+      junctions: junctions.map((j) => ({ j, x: j.node.x, y: j.node.y, h: this.ground.landAt(j.node.x, j.node.y) })),
     });
     stage.trackFrame(performance.now() - t0 + 8);
   }

@@ -6,7 +6,7 @@
 const $ = (sel) => document.querySelector(sel);
 const SAVE_KEY = "vw.city";
 const PREFS_KEY = "vw.gamePrefs";
-const VERSION = "0.15.0";
+const VERSION = "0.16.0";
 
 const canvas = $("#cityCanvas");
 const ctx = canvas.getContext("2d");
@@ -213,6 +213,7 @@ const LENSES = [
   { id: "levels", icon: "📶", label: "Levels", legend: [["#38bdf8", "Level 1"], ["#a78bfa", "Level 2"], ["#f59e0b", "Level 3"], [null, "🔒 needs more people"]] },
   { id: "fire", icon: "🚒", label: "Fire coverage", legend: [["#ef4444", "Station reach"], ["#f87171", "Not covered"]] },
   { id: "police", icon: "🚓", label: "Police coverage", legend: [["#3b82f6", "Station reach"], ["#f87171", "Not covered"]] },
+  { id: "traffic", icon: "🚦", label: "Traffic", legend: [["#22c55e", "Flowing"], ["#f59e0b", "Busy"], ["#ef4444", "Jammed"], [null, "Tap one to add a sign or light"]] },
 ];
 const LENS_COVERAGE = { fire: true, police: true };
 
@@ -381,6 +382,14 @@ function updateTopbar() {
   const chip = $("#collectorChip");
   chip.hidden = !ui.collector || !!visit;
   if (ui.collector) chip.querySelector("b").textContent = ui.collector.total - ui.collector.pool.size + "/" + ui.collector.total;
+  const happy = $("#happyChip");
+  happy.hidden = visit || !c.layout.graph.junctions?.size;
+  if (!happy.hidden) {
+    const h = city.happiness;
+    happy.querySelector("span").textContent = happyFace(h);
+    happy.querySelector("b").textContent = Math.round(h * 100) + "%";
+    happy.classList.toggle("alert", h < 0.4);
+  }
   const safe = $("#safetyChip");
   safe.hidden = c.tierReached < SAFETY_TIER;
   if (!safe.hidden) {
@@ -434,6 +443,7 @@ $("#compassBtn").addEventListener("click", () => {
   ui.unrotate = true;
 });
 $("#appealChip").addEventListener("click", openAppeal);
+$("#happyChip").addEventListener("click", () => visit || openHappiness());
 // The chip only has room for the head count; tap it for the full picture.
 $("#popChip").addEventListener("click", () => {
   const c = visit ? visit.city : city;
@@ -577,7 +587,7 @@ function onTap(world, screen) {
 
   if (!visit && !busy) {
     const hit = renderer.pickMarker(world, screen, z);
-    if (hit) return hit.incident ? openLotSheet(hit.lot, false) : collect(hit.lot);
+    if (hit) return hit.junction ? openJunctionSheet(hit.junction) : hit.incident ? openLotSheet(hit.lot, false) : collect(hit.lot);
   }
 
   if (!visit && !busy && city.roadChoice) {
@@ -588,6 +598,8 @@ function onTap(world, screen) {
   if (!busy) {
     const car = carAt(world, z);
     if (car) return openCarSheet(car);
+    const j = junctionAt(active.city, world, z);
+    if (j) return openJunctionSheet(j, !!visit);
   }
 
   const lot = active.renderer.lotAt(world, screen);
@@ -1978,6 +1990,102 @@ function incidentCard(inc) {
     "</div>";
 }
 
+// ---------------------------------------------------------------------------
+// Intersections and 😊 happiness
+// ---------------------------------------------------------------------------
+const happyFace = (h) => (h >= 0.7 ? "😊" : h >= 0.4 ? "😐" : "😟");
+
+// The intersection under a tap: the middle of the crossing, not the lots.
+function junctionAt(c, world, z) {
+  let best = null, bestD = Math.max(55, 18 * z);
+  for (const j of c.layout.graph.junctions?.values() || []) {
+    const d = distance(j.node, world);
+    if (d < bestD) [best, bestD] = [j, d];
+  }
+  return best;
+}
+
+const costLabel = (cost) => fmt(cost.coins) + " 💰 + " + fmt(cost.materials) + " 🧱";
+
+function openJunctionSheet(j, readOnly = false) {
+  const c = readOnly ? visit.city : city;
+  const ctl = j.control && CONTROLS[j.control];
+  const waiting = Math.round(j.queue * 10) / 10, worst = Math.round(j.worst / 60);
+  let html =
+    "<p>" + (ctl ? ctl.about : "No signs yet. Drivers slow right down and guess who goes first, and when cars come from two roads at once, everyone hesitates.") + "</p>" +
+    "<div class='stat-grid'><div class='stat'><b>" + (j.jammed ? "🔴 Jammed" : j.load > 0.33 ? "🟠 Busy" : "🟢 Flowing") + "</b><span>Traffic here</span></div>" +
+    "<div class='stat'><b>" + waiting + "</b><span>Cars waiting (avg)</span></div>" +
+    "<div class='stat'><b>" + worst + "s</b><span>Longest wait now</span></div>" +
+    "<div class='stat'><b>" + j.arms.length + "</b><span>Roads meet</span></div></div>";
+  if (!readOnly) {
+    html += "<div class='list'>" + CONTROL_IDS.filter((id) => id !== j.control).map((id) => {
+      const o = CONTROLS[id], cost = c.controlCost(id);
+      const ok = c.coins >= cost.coins && c.materials >= cost.materials;
+      return "<div class='item-row'><span class='emoji'>" + o.icon + "</span><div class='grow'><b>" + o.name + "</b><small>" + o.about + "</small></div>" +
+        "<button data-control='" + id + "' class='gold'" + (ok ? "" : " disabled") + ">" + costLabel(cost) + "</button></div>";
+    }).join("") + "</div>" +
+      (j.control ? "<button id='removeControl' class='ghost big' style='margin-top:8px;color:#fca5a5'>Remove the " + ctl.name.toLowerCase() + "</button>" : "") +
+      "<p class='muted'>Smooth traffic keeps people 😊 happy, gets shoppers to shops and fire trucks and police to emergencies faster. A new control replaces the old one.</p>";
+  }
+  openSheet((ctl ? ctl.icon + " " + ctl.name : "🚦 Intersection"), html, (body) => {
+    body.querySelectorAll("[data-control]").forEach((b) => b.addEventListener("click", () => {
+      const id = b.dataset.control;
+      if (!city.buildControl(j.key, id)) return toast("Not enough coins or materials");
+      floater({ x: j.node.x, y: j.node.y }, CONTROLS[id].icon + " " + CONTROLS[id].name + "!", "#fde68a");
+      sfx.play("build");
+      buzz(40);
+      saveGame();
+      closeSheet();
+    }));
+    body.querySelector("#removeControl")?.addEventListener("click", () => {
+      if (!confirm("Remove the " + ctl.name.toLowerCase() + "? You won't get your coins back.")) return;
+      city.removeControl(j.key);
+      saveGame();
+      closeSheet();
+    });
+  });
+}
+
+// What happiness does and what's hurting it, with the worst intersections.
+function openHappiness() {
+  const h = city.happiness, f = city.happyFactor();
+  const worst = [...(city.layout.graph.junctions?.values() || [])].filter((j) => j.load > 0.33).sort((a, b) => b.load - a.load).slice(0, 4);
+  const pctSigned = (v) => (v >= 0 ? "+" : "−") + Math.abs(Math.round(v * 100)) + "%";
+  const html =
+    "<div class='stat-grid'><div class='stat'><b>" + happyFace(h) + " " + Math.round(h * 100) + "%</b><span>Happiness</span></div>" +
+    "<div class='stat'><b>" + pctSigned(f - 1) + "</b><span>Growth &amp; taxes</span></div></div>" +
+    "<p>Happy people move in faster and pay more taxes: up to +10% at 100%, down to −50% when everyone's fed up.</p>" +
+    "<div class='card'><h3>🚗 Traffic</h3><div class='row'><span class='grow'>Time cars spend stuck</span><b>" + Math.round(city.congestion * 100) + "%</b></div>" +
+    "<p class='muted'>Up to 20% is normal. Jams at busy intersections slow everyone down: shoppers reach shops less often, and fire trucks, police and the collector take longer.</p>" +
+    (worst.length
+      ? "<div class='list'>" + worst.map((j) =>
+          "<div class='item-row'><span class='emoji'>" + (j.control ? CONTROLS[j.control].icon : "🚗") + "</span><div class='grow'><b>" + (j.jammed ? "Jammed" : "Busy") + " intersection</b>" +
+          "<small>" + (j.control ? CONTROLS[j.control].name : "No signs") + " · " + Math.round(j.worst / 60) + "s longest wait</small></div>" +
+          "<button class='small' data-junction='" + j.key + "'>👀</button></div>").join("") + "</div>"
+      : "<p class='muted'>No busy intersections right now. 🎉</p>") +
+    "<p class='muted'>Tap any intersection to add a 🛑 stop sign or 🚦 traffic light. The 🚦 Traffic map view shows them all.</p></div>";
+  openSheet("😊 Happiness", html, (body) => {
+    body.querySelectorAll("[data-junction]").forEach((b) => b.addEventListener("click", () => {
+      const j = worst.find((x) => x.key === b.dataset.junction);
+      closeSheet();
+      if (!j) return;
+      ui.focus = { at: scale(j.node, -1), zoom: Math.min(viewport.zoom, 1.4) };
+      openJunctionSheet(j);
+    }));
+  });
+}
+
+// A heads-up the first time an intersection jams (then at most every 5 minutes).
+function noticeJams(c) {
+  if (visit || c !== city || ui.resting) return;
+  const now = performance.now();
+  if (ui.jamNoticed && now - ui.jamNoticed < 300000) return;
+  const j = [...(c.layout.graph.junctions?.values() || [])].find((x) => x.jammed && !x.control);
+  if (!j) return;
+  ui.jamNoticed = now;
+  toast("🚗 Traffic is jamming at an intersection – tap the 🚗 on the map to add a stop sign or light", 4500);
+}
+
 function openSafety() {
   if (city.tierReached < SAFETY_TIER) {
     return openSheet("🛡️ Safety", "<p>Fire &amp; police unlock at " + TIERS[SAFETY_TIER].icon + " " + TIERS[SAFETY_TIER].name + " (" + TIERS[SAFETY_TIER].pop + " people).</p>");
@@ -2116,6 +2224,13 @@ function updateResponders(dt) {
     ui.responders.push(v);
   }
   const everyone = [...carsOnRoad(), ...ui.responders, ...(ui.collector ? ui.collector.trucks : [])];
+  // Cars ahead of a fire truck or police car on its way pull over.
+  for (const v of ui.responders) {
+    if (!v.rushing || !v.ahead) continue;
+    for (const car of ui.cars) {
+      if (car instanceof Commuter && distance(car, v) < 200 && v.ahead.some((a) => distance(a.p, car) < 30)) car.pullOver();
+    }
+  }
   for (const v of ui.responders) {
     if (v.station.kind !== "svc") v.state = "done"; // its station closed
     else if ((v.state === "out" || v.state === "working") && v.inc.lot.incident !== v.inc) v.state = "back"; // over without us
@@ -2128,9 +2243,12 @@ function updateResponders(dt) {
   ui.responders = ui.responders.filter((v) => v.state !== "done");
 }
 
-// Up to one car per 6 people, but no more than the roads can comfortably hold
-// (one per 250 units of road), and at most 60 so phones stay smooth. The
-// count stays the same around the clock, so shop visits (and income) do too.
+// Up to one car per 6 people, but no more than the roads can hold without
+// jamming everywhere (one per 300 units of road in a small town, thinning out
+// as the town spreads and trips get longer), and at most MAX_TOWN_CARS so
+// phones stay smooth. The count stays the same around the clock, so shop
+// visits (and income) do too.
+const MAX_TOWN_CARS = 120;
 function roadLength(c) {
   const segs = c.layout.graph.segments;
   if (c._roadLen && c._roadLen.n === segs.length) return c._roadLen.len;
@@ -2141,9 +2259,42 @@ function roadLength(c) {
 // Cars pulled over at a stop are out of the way of traffic.
 const carsOnRoad = () => ui.cars.filter((car) => !car.parked);
 
-function updateTraffic(active) {
+// Everything driving, for intersections and cars to check against.
+function roadUsers() {
+  const everyone = carsOnRoad();
+  if (ui.drive) everyone.push(ui.drive);
+  if (ui.collector && !visit) everyone.push(...ui.collector.trucks);
+  if (!visit) everyone.push(...ui.responders);
+  return everyone;
+}
+
+// Once a frame, before anything drives: intersections let waiting cars in.
+function stepJunctions(c) {
+  const junctions = syncJunctions(c.layout.graph, c.controls);
+  if (!junctions.size) return;
+  const everyone = roadUsers();
+  for (const j of junctions.values()) j.tick(everyone);
+}
+
+// Cars only look at cars in their own and the neighboring grid cells.
+const GRID = 300;
+function neighborhoods(cars) {
+  const cells = new Map();
+  for (const car of cars) {
+    const k = Math.floor(car.x / GRID) + "," + Math.floor(car.y / GRID);
+    if (!cells.has(k)) cells.set(k, []);
+    cells.get(k).push(car);
+  }
+  return (car) => {
+    const cx = Math.floor(car.x / GRID), cy = Math.floor(car.y / GRID), near = [];
+    for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) near.push(...(cells.get(cx + i + "," + (cy + j)) || []));
+    return near;
+  };
+}
+
+function updateTraffic(active, dt) {
   const c = active.city;
-  const want = Math.min(60, Math.floor(c.pop / 6), Math.floor(roadLength(c) / 250));
+  const want = Math.min(MAX_TOWN_CARS, Math.floor(c.pop / 6), Math.floor(roadLength(c) / (300 + 4 * c.roadCount)));
   // Residents finish their trips and go inside; if the town shrinks, cars leave.
   ui.cars = ui.cars.filter((car) => !car.done);
   if (ui.cars.length > want) ui.cars.pop();
@@ -2153,12 +2304,18 @@ function updateTraffic(active) {
     const car = trip ? new Commuter(c.layout.graph, trip, onStop) : new TownCar(c.layout.graph);
     if (!ui.cars.some((o) => distance(o, car) < 60)) ui.cars.push(car);
   }
-  const everyone = carsOnRoad();
-  if (ui.drive) everyone.push(ui.drive);
-  if (ui.collector && !visit) everyone.push(...ui.collector.trucks);
-  if (!visit) everyone.push(...ui.responders);
-  for (const car of ui.cars) car.update(everyone);
+  const near = neighborhoods(roadUsers());
+  let driving = 0, stuck = 0;
+  for (const car of ui.cars) {
+    car.update(near(car));
+    if (car.state !== "driving") continue;
+    driving++;
+    if (car.speed < 0.4 && (car.waitingFor || (car.jWait && car.jWait.t > 90))) stuck++;
+  }
+  // Measure how bad traffic is (it sets 😊 happiness) while the town runs.
+  if (!visit && driving >= 3 && Date.now() - c.lastActive < ACTIVE_GRACE) c.sampleTraffic(stuck / driving, dt);
   updateCollector();
+  noticeJams(c);
 }
 
 // A shopper stopping at a shop spends a little there (more at bigger shops),
@@ -2222,6 +2379,7 @@ function loop(now) {
     if (Math.abs(viewport.angle) < 0.005) [viewport.angle, ui.unrotate] = [0, false];
   }
 
+  stepJunctions(visit ? visit.city : city);
   // The town runs while you're here and for 15 minutes after your last tap.
   if (Date.now() - city.lastActive < ACTIVE_GRACE) {
     handleEvents(city.tick(dt));
@@ -2234,7 +2392,7 @@ function loop(now) {
     saveGame();
   }
   const active = visit || { city, renderer };
-  updateTraffic(active);
+  updateTraffic(active, dt);
 
   if (ui.drive) {
     ui.drive.update(renderer.borders, ui.cars);
@@ -2261,6 +2419,7 @@ function loop(now) {
     coverage: visit ? null : ui.placeStation || (ui.selected && ui.selected.kind === "svc" ? ui.selected.special : null) || ui.showCoverage || (LENS_COVERAGE[ui.lens] && active.renderer.is3d ? ui.lens : null),
     player: ui.drive,
     floaters: ui.floaters,
+    junctions: [...(active.city.layout.graph.junctions?.values() || [])],
     now,
   });
 

@@ -6,6 +6,16 @@
 
 const CHANGELOG = [
   {
+    version: "0.16.0",
+    notes: [
+      "🚦 Intersections! Tap where roads meet to add a 🛑 2-way stop, ✋ 4-way stop or 🚦 traffic light",
+      "🚗 Traffic is real now: no more cars jumping away when they're stuck. Busy intersections without signs back up, and a 🚗 marker shows where",
+      "😊 New happiness stat (top bar): smooth traffic keeps people happy, so they move in faster and pay more taxes. Jams do the opposite",
+      "🚒 Cars pull over for fire trucks and police, who get right of way at every intersection",
+      "🗺️ New 🚦 Traffic map view shows how busy every intersection is",
+    ],
+  },
+  {
     version: "0.15.0",
     notes: [
       "🚒 Fire & police stations are much cheaper to build and upgrade",

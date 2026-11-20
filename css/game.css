@@ -122,14 +122,20 @@ button.big { width: 100%; padding: 14px; font-size: 17px; border-radius: var(--r
 }
 .chip span { filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.4)); }
 .chip b { overflow: hidden; text-overflow: ellipsis; }
-/* five chips (fire & police unlocked): squeeze a little */
-.chips:has(#safetyChip:not([hidden])) { gap: 4px; }
-.chips:has(#safetyChip:not([hidden])) .chip { font-size: 13px; padding: 5px 2px; gap: 2px; letter-spacing: -0.02em; }
-.chips:has(#safetyChip:not([hidden])) .chip span { font-size: 12px; }
+/* five or six chips (😊 happiness, fire & police): squeeze a little */
+.chips:has(#safetyChip:not([hidden])), .chips:has(#happyChip:not([hidden])) { gap: 4px; }
+.chips:has(#safetyChip:not([hidden])) .chip, .chips:has(#happyChip:not([hidden])) .chip { font-size: 13px; padding: 5px 2px; gap: 2px; letter-spacing: -0.02em; }
+.chips:has(#safetyChip:not([hidden])) .chip span, .chips:has(#happyChip:not([hidden])) .chip span { font-size: 12px; }
+/* all six: smaller still */
+.chips:has(#safetyChip:not([hidden])):has(#happyChip:not([hidden])) { gap: 3px; }
+.chips:has(#safetyChip:not([hidden])):has(#happyChip:not([hidden])) .chip { font-size: 12px; gap: 1px; }
+.chips:has(#safetyChip:not([hidden])):has(#happyChip:not([hidden])) .chip span { font-size: 11px; }
 @media (max-width: 360px) {
   #topbar { padding-left: 8px; padding-right: 8px; }
-  .chips:has(#safetyChip:not([hidden])) .chip { font-size: 12px; }
-  .chips:has(#safetyChip:not([hidden])) .chip span { font-size: 11px; }
+  .chips:has(#safetyChip:not([hidden])) .chip, .chips:has(#happyChip:not([hidden])) .chip { font-size: 12px; }
+  .chips:has(#safetyChip:not([hidden])) .chip span, .chips:has(#happyChip:not([hidden])) .chip span { font-size: 11px; }
+  .chips:has(#safetyChip:not([hidden])):has(#happyChip:not([hidden])) .chip { font-size: 11px; }
+  .chips:has(#safetyChip:not([hidden])):has(#happyChip:not([hidden])) .chip span { font-size: 10px; }
 }
 .chip.bump { transform: scale(1.18); }
 /* 👥: a thin bar along the bottom shows how full the town's homes are */
@@ -141,7 +147,7 @@ button.big { width: 100%; padding: 14px; font-size: 17px; border-radius: var(--r
 }
 #popChip.full::after { background: #f59e0b; }
 .chip[hidden] { display: none; }
-#safetyChip.alert { box-shadow: 0 0 0 2px #ef4444; animation: alertPulse 1s ease-in-out infinite; }
+#safetyChip.alert, #happyChip.alert { box-shadow: 0 0 0 2px #ef4444; animation: alertPulse 1s ease-in-out infinite; }
 @keyframes alertPulse { 50% { background: rgba(127, 29, 29, 0.85); } }
 .card.incident { border-color: #ef4444; background: rgba(127, 29, 29, 0.25); }
 .road-bar {

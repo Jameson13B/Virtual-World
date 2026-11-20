@@ -116,7 +116,7 @@ export class Overlay {
 
   // `project(x, h, y)` → screen point or null. `markers` comes from the
   // renderer: one entry per lot with where its roof is.
-  draw(ctx, { width, height, project, city, markers, z, now, lens, choices, roadPick, floaters, showChoices, placing, visiting }) {
+  draw(ctx, { width, height, project, city, markers, z, now, lens, choices, roadPick, floaters, showChoices, placing, visiting, junctions = [] }) {
     this.targets = [];
     const t = now / 1000;
     const k = clamp(1.25 - z * 0.12, 0.65, 1.1); // markers shrink a little when zoomed out
@@ -200,6 +200,23 @@ export class Overlay {
           this.targets.push({ x: p.x, y: p.y + bob, r: R * 1.6, bubble: true, lot });
         }
         continue;
+      }
+    }
+
+    // intersections: all of them in the traffic lens, colored by how busy
+    // they are; elsewhere only the jammed ones, so the player can fix them
+    if (!placing) {
+      for (const m of junctions) {
+        const j = m.j;
+        if (lens !== "traffic" && (visiting || !j.jammed)) continue;
+        const p = project(m.x, m.h + 34, m.y);
+        if (!onScreen(p)) continue;
+        const load = j.load, color = load > 0.66 ? "#ef4444" : load > 0.33 ? "#f59e0b" : "#22c55e";
+        const jam = j.jammed && !visiting;
+        const bob = jam ? Math.sin(t * 4 + m.x) * 3 : 0;
+        const r = R * (jam ? 1 + 0.08 * Math.sin(t * 7) : 0.85);
+        bubble(ctx, p.x, p.y + bob, r, j.control ? CONTROLS[j.control].icon : jam ? "🚗" : "➕", { ring: Math.max(0.04, load), ringColor: color, border: color });
+        this.targets.push({ x: p.x, y: p.y + bob, r: r * 1.5, junction: j });
       }
     }
 

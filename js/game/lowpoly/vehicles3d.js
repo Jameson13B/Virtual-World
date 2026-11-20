@@ -7,7 +7,7 @@ import * as THREE from "../../../vendor/three.module.min.js";
 import { Kit } from "./kit.js";
 import { DECK_Y } from "./ground.js";
 
-const MAX_CARS = 96;
+const MAX_CARS = 160;
 
 // Models face -y (forward), in a frame where 1 unit = 1 world unit.
 function carModel() {
