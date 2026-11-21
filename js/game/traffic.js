@@ -28,7 +28,7 @@ const SQUEEZE = 600; // frames waiting before a car squeezes into a full lane
 const REROUTE = 900; // frames waiting before a car gives up and turns another way
 const HESITATE = 40; // frames an uncontrolled intersection sits empty before the next car tries
 const STOP_FRAMES = { stop2: 20, stop4: 14 };
-const GREEN = { min: 150, max: 480, amber: 50 };
+const GREEN = { min: 240, max: 720, amber: 50, look: 320 };
 
 const junctionKey = (p) => Math.round(p.x) + "," + Math.round(p.y);
 
@@ -127,7 +127,7 @@ class Junction {
     }
     this.queue += (waiting - this.queue) * 0.003;
     this.worst = worst;
-    if (this.control === "light") this.#cycle(asks);
+    if (this.control === "light") this.#cycle(asks, cars);
     // Sirens first, then whoever has waited longest. A car whose turn it is
     // but has to wait for the box keeps its place: nobody behind it on its
     // road, and nobody whose path crosses its path, goes ahead of it.
@@ -145,16 +145,34 @@ class Junction {
   }
 
   // Lights turn when the green side runs dry and the red side has cars, or
-  // after the longest green. Amber clears the box between turns.
-  #cycle(asks) {
+  // after the longest green. Amber clears the box between turns. A queue
+  // pulling away from the line still counts as cars on green, so the light
+  // doesn't turn on the cars still catching up.
+  #cycle(asks, cars) {
     if (this.amber > 0) {
       if (--this.amber === 0) [this.phase, this.phaseT] = [1 - this.phase, 0];
       return;
     }
     this.phaseT++;
-    const wants = (g) => asks.some(([, a]) => a.gap < 150 && (this.isMain(a.from) ? 0 : 1) === g);
+    const group = (arm) => (this.isMain(arm) ? 0 : 1);
     const other = 1 - this.phase;
-    if (this.phaseT > GREEN.min && wants(other) && (!wants(this.phase) || this.phaseT > GREEN.max)) this.amber = GREEN.amber;
+    const red = asks.some(([, a]) => a.gap < 150 && group(a.from) === other);
+    if (this.phaseT > GREEN.min && red && (this.phaseT > GREEN.max || !this.#coming(this.phase, cars))) this.amber = GREEN.amber;
+  }
+
+  // Whether any car is driving (or queued) toward the box on group g's roads.
+  #coming(g, cars) {
+    for (const from of this.arms) {
+      if ((this.isMain(from) ? 0 : 1) !== g) continue;
+      const dir = normalize(subtract(from, this.node)), side = perpendicular(dir), back = this.back.get(from) || STOP_BACK;
+      const far = Math.min(distance(from, this.node), back + GREEN.look);
+      for (const o of cars) {
+        if (o.parked || Math.abs(o.x - this.node.x) > far + 40 || Math.abs(o.y - this.node.y) > far + 40) continue;
+        const v = subtract(o, this.node), along = dot(v, dir);
+        if (along > back - 10 && along < far && Math.abs(dot(v, side) + LANE_OFFSET) < 18) return true;
+      }
+    }
+    return false;
   }
 
   // Whether two moves' paths through the box cross (or end on the same
@@ -226,7 +244,7 @@ class Junction {
       case "stop4":
         return a.gap < 14 && w.stopped >= STOP_FRAMES.stop4;
       case "light":
-        return this.amber === 0 && (this.isMain(a.from) ? 0 : 1) === this.phase && a.gap < 45;
+        return this.amber === 0 && (this.isMain(a.from) ? 0 : 1) === this.phase && a.gap < 80;
       default:
         // Uncontrolled: creep up, look both ways, and when two roads both
         // have cars, wait a beat to see who goes.
@@ -534,7 +552,7 @@ class TownCar extends Car {
         const hit = near && ahead.find((a) => body.some((b) => distance(a.p, b) < 24));
         if (hit) d = hit.d;
         else if (o.ahead && !(this.nudge > 0)) d = this.#yieldDistance(o);
-        const l = clamp((d - 55) * 0.06, 0, this.maxSpeed);
+        const l = clamp((d - 55) * 0.1, 0, this.maxSpeed);
         if (l < target) {
           target = l;
           waitingFor = o;
@@ -549,7 +567,7 @@ class TownCar extends Car {
       if (++this.blocked > 300 && this.#waitCircle()) [this.blocked, this.nudge] = [0, 90];
     } else this.blocked = 0;
 
-    this.speed = this.speed < target ? Math.min(target, this.speed + 0.05) : Math.max(target, this.speed - 0.18);
+    this.speed = this.speed < target ? Math.min(target, this.speed + 0.07) : Math.max(target, this.speed - 0.18);
     this.s += this.speed;
     this.#place();
   }

@@ -6,6 +6,13 @@
 
 const CHANGELOG = [
   {
+    version: "0.16.2",
+    notes: [
+      "🚦 Traffic lights let a lot more cars through: greens last until the queue has caught up (up to 12 s), cars on green don't slow for the line, and queues pull away faster",
+      "💰 Changing an intersection's control now counts what you already paid toward a better one, and a cheaper one or removing it gives back half the difference",
+    ],
+  },
+  {
     version: "0.16.1",
     notes: [
       "🚗 Fixed traffic locking up for good: cars no longer turn around in the middle of a road or pull into a road that's already full, a car waiting for space doesn't hold up the cars that would make it, and drivers stuck for a while turn another way",

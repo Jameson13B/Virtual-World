@@ -6,7 +6,7 @@
 const $ = (sel) => document.querySelector(sel);
 const SAVE_KEY = "vw.city";
 const PREFS_KEY = "vw.gamePrefs";
-const VERSION = "0.16.1";
+const VERSION = "0.16.2";
 
 const canvas = $("#cityCanvas");
 const ctx = canvas.getContext("2d");
@@ -2010,6 +2010,11 @@ function junctionAt(c, world, z) {
 }
 
 const costLabel = (cost) => fmt(cost.coins) + " 💰 + " + fmt(cost.materials) + " 🧱";
+// A control's price, or what comes back when it's a step down.
+const changeLabel = (cost) => {
+  if (cost.coins >= 0 && cost.materials >= 0) return costLabel(cost);
+  return "Get " + fmt(Math.max(0, -cost.coins)) + " 💰 + " + fmt(Math.max(0, -cost.materials)) + " 🧱 back";
+};
 
 function openJunctionSheet(j, readOnly = false) {
   const c = readOnly ? visit.city : city;
@@ -2023,13 +2028,13 @@ function openJunctionSheet(j, readOnly = false) {
     "<div class='stat'><b>" + j.arms.length + "</b><span>Roads meet</span></div></div>";
   if (!readOnly) {
     html += "<div class='list'>" + CONTROL_IDS.filter((id) => id !== j.control).map((id) => {
-      const o = CONTROLS[id], cost = c.controlCost(id);
+      const o = CONTROLS[id], cost = c.controlCost(id, j.key);
       const ok = c.coins >= cost.coins && c.materials >= cost.materials;
       return "<div class='item-row'><span class='emoji'>" + o.icon + "</span><div class='grow'><b>" + o.name + "</b><small>" + o.about + "</small></div>" +
-        "<button data-control='" + id + "' class='gold'" + (ok ? "" : " disabled") + ">" + costLabel(cost) + "</button></div>";
+        "<button data-control='" + id + "' class='gold'" + (ok ? "" : " disabled") + ">" + changeLabel(cost) + "</button></div>";
     }).join("") + "</div>" +
-      (j.control ? "<button id='removeControl' class='ghost big' style='margin-top:8px;color:#fca5a5'>Remove the " + ctl.name.toLowerCase() + "</button>" : "") +
-      "<p class='muted'>Smooth traffic keeps people 😊 happy, gets shoppers to shops and fire trucks and police to emergencies faster. A new control replaces the old one.</p>";
+      (j.control ? "<button id='removeControl' class='ghost big' style='margin-top:8px;color:#fca5a5'>Remove the " + ctl.name.toLowerCase() + " · " + changeLabel(c.controlCost(null, j.key)) + "</button>" : "") +
+      "<p class='muted'>Smooth traffic keeps people 😊 happy, gets shoppers to shops and fire trucks and police to emergencies faster. A new control replaces the old one: what you paid counts toward a better one, and a cheaper one gives back half the difference.</p>";
   }
   openSheet((ctl ? ctl.icon + " " + ctl.name : "🚦 Intersection"), html, (body) => {
     body.querySelectorAll("[data-control]").forEach((b) => b.addEventListener("click", () => {
@@ -2042,7 +2047,8 @@ function openJunctionSheet(j, readOnly = false) {
       closeSheet();
     }));
     body.querySelector("#removeControl")?.addEventListener("click", () => {
-      if (!confirm("Remove the " + ctl.name.toLowerCase() + "? You won't get your coins back.")) return;
+      const back = c.controlCost(null, j.key);
+      if (!confirm("Remove the " + ctl.name.toLowerCase() + "? You get " + fmt(-back.coins) + " 💰 + " + fmt(-back.materials) + " 🧱 back, half its price.")) return;
       city.removeControl(j.key);
       saveGame();
       closeSheet();

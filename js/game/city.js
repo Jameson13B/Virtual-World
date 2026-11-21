@@ -54,8 +54,9 @@ const SAFETY_GRACE = 600; // seconds of play before the first emergency
 const ACTIVE_GRACE = 15 * 60 * 1000;
 
 // Intersection controls (the junction logic is in traffic.js). Each costs a
-// few minutes of income plus a share of a road's 🧱; a better one replaces
-// the old one at full price.
+// few minutes of income plus a share of a road's 🧱. The one already there
+// counts toward a better one; a cheaper one, or none, gives back half the
+// difference.
 const CONTROLS = {
   stop2: { icon: "🛑", name: "2-way stop", minutes: 5, share: 0.05, min: 50, about: "The main road keeps moving; cars on the side roads stop and wait for a gap." },
   stop4: { icon: "✋", name: "4-way stop", minutes: 10, share: 0.1, min: 100, about: "Everyone stops, then cars take turns in the order they arrived. Fair when every road is busy." },
@@ -199,18 +200,27 @@ class City {
   }
 
   // ---- intersections ------------------------------------------------------------
-  controlCost(type) {
+  #controlPrice(type) {
     const c = CONTROLS[type];
+    if (!c) return { coins: 0, materials: 0 };
     return {
       coins: Math.round(Math.max(c.min, this.incomeRate() * 60 * c.minutes) / 10) * 10,
       materials: Math.max(1, Math.round(this.roadCost() * c.share)),
     };
   }
 
+  // What changing intersection `key` to `type` (null: no control) costs, at
+  // today's prices. Negative amounts are given back.
+  controlCost(type, key = null) {
+    const now = this.#controlPrice(key && this.controls[key]), next = this.#controlPrice(type);
+    const diff = (d, step) => (d >= 0 ? d : -Math.floor(-d / 2 / step) * step);
+    return { coins: diff(next.coins - now.coins, 10), materials: diff(next.materials - now.materials, 1) };
+  }
+
   // Puts a control on the intersection `key` (replacing any other).
   buildControl(key, type) {
     if (!CONTROLS[type] || this.controls[key] === type) return false;
-    const cost = this.controlCost(type);
+    const cost = this.controlCost(type, key);
     if (this.coins < cost.coins || this.materials < cost.materials) return false;
     this.coins -= cost.coins;
     this.materials -= cost.materials;
@@ -220,6 +230,9 @@ class City {
 
   removeControl(key) {
     if (!this.controls[key]) return false;
+    const back = this.controlCost(null, key);
+    this.coins -= back.coins;
+    this.materials -= back.materials;
     delete this.controls[key];
     return true;
   }
