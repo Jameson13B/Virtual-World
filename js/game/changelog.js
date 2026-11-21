@@ -8,7 +8,7 @@ const CHANGELOG = [
   {
     version: "0.16.2",
     notes: [
-      "🚦 Traffic lights let a lot more cars through: greens last until the queue has caught up (up to 12 s), cars on green don't slow for the line, and queues pull away faster",
+      "🚦 Traffic lights follow the traffic: green stays with the busier side until its queue has gone through, turns quickly when that side empties, and never leaves anyone on red for more than about 25 s. Cars on green don't slow for the line, and queues pull away faster",
       "💰 Changing an intersection's control now counts what you already paid toward a better one, and a cheaper one or removing it gives back half the difference",
     ],
   },

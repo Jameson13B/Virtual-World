@@ -28,7 +28,11 @@ const SQUEEZE = 600; // frames waiting before a car squeezes into a full lane
 const REROUTE = 900; // frames waiting before a car gives up and turns another way
 const HESITATE = 40; // frames an uncontrolled intersection sits empty before the next car tries
 const STOP_FRAMES = { stop2: 20, stop4: 14 };
-const GREEN = { min: 240, max: 720, amber: 50, look: 320 };
+// Lights: a green with nobody left coming turns after `min`; one still
+// carrying cars holds until the red side clearly has more waiting (each `wait`
+// frames a red car has waited counts as one more car), after at least `hold`,
+// and never keeps a red car waiting past `starve`.
+const GREEN = { min: 90, hold: 240, starve: 1500, wait: 300, amber: 50, look: 320 };
 
 const junctionKey = (p) => Math.round(p.x) + "," + Math.round(p.y);
 
@@ -144,24 +148,31 @@ class Junction {
     }
   }
 
-  // Lights turn when the green side runs dry and the red side has cars, or
-  // after the longest green. Amber clears the box between turns. A queue
+  // Lights follow the traffic: green stays with the side that has the cars.
+  // It turns as soon as the green side runs dry and someone waits on red, or
+  // when red's queue (and how long it has waited) outweighs green's. A queue
   // pulling away from the line still counts as cars on green, so the light
-  // doesn't turn on the cars still catching up.
+  // doesn't turn on the cars still catching up. Amber clears the box.
   #cycle(asks, cars) {
     if (this.amber > 0) {
       if (--this.amber === 0) [this.phase, this.phaseT] = [1 - this.phase, 0];
       return;
     }
     this.phaseT++;
-    const group = (arm) => (this.isMain(arm) ? 0 : 1);
     const other = 1 - this.phase;
-    const red = asks.some(([, a]) => a.gap < 150 && group(a.from) === other);
-    if (this.phaseT > GREEN.min && red && (this.phaseT > GREEN.max || !this.#coming(this.phase, cars))) this.amber = GREEN.amber;
+    let redWait = -1;
+    for (const [car, a] of asks) {
+      if (a.gap < 150 && (this.isMain(a.from) ? 0 : 1) === other) redWait = Math.max(redWait, car.jWait?.t || 0);
+    }
+    if (redWait < 0 || this.phaseT <= GREEN.min) return;
+    const green = this.#coming(this.phase, cars);
+    const red = this.#coming(other, cars) + redWait / GREEN.wait;
+    if (!green || redWait > GREEN.starve || (this.phaseT > GREEN.hold && red > green * 1.5 + 1)) this.amber = GREEN.amber;
   }
 
-  // Whether any car is driving (or queued) toward the box on group g's roads.
+  // How many cars are driving (or queued) toward the box on group g's roads.
   #coming(g, cars) {
+    let n = 0;
     for (const from of this.arms) {
       if ((this.isMain(from) ? 0 : 1) !== g) continue;
       const dir = normalize(subtract(from, this.node)), side = perpendicular(dir), back = this.back.get(from) || STOP_BACK;
@@ -169,10 +180,10 @@ class Junction {
       for (const o of cars) {
         if (o.parked || Math.abs(o.x - this.node.x) > far + 40 || Math.abs(o.y - this.node.y) > far + 40) continue;
         const v = subtract(o, this.node), along = dot(v, dir);
-        if (along > back - 10 && along < far && Math.abs(dot(v, side) + LANE_OFFSET) < 18) return true;
+        if (along > back - 10 && along < far && Math.abs(dot(v, side) + LANE_OFFSET) < 18) n++;
       }
     }
-    return false;
+    return n;
   }
 
   // Whether two moves' paths through the box cross (or end on the same
