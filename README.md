@@ -20,7 +20,7 @@ Its roads, buildings and rendering engine come from freeCodeCamp's
 👥 people move in → 💰 taxes + shop income, 🧱 from factories → ⬆️ upgrades → bigger tiers
 ```
 
-- **Maps:** a new town starts by picking its land: 🌲 Woodland, 🏖️ Beach, 🏞️ Grand River, ⛰️ Mountains, 🌊 Great Bay, 🛶 Lake Country or 🏝️ Islands. Each card previews the exact map you'll get, and 🎲 deals new ones, so two towns of the same type never match. Roads and lots stay on dry land, but a road can bridge up to 600 units of water and tunnel through up to 400 of rock. Towns from before maps existed stay on the classic flat forest.
+- **Maps:** a new town starts by picking its land: 🌲 Woodland, 🏖️ Beach, 🏞️ Grand River, ⛰️ Mountains, 🌊 Great Bay, 🛶 Lake Country or 🏝️ Islands. Each card previews the exact map you'll get, and 🎲 deals new ones, so two towns of the same type never match. Roads and lots stay on dry land, but a road can bridge up to 600 units of water and tunnel through up to 1,500 of rock. A road heading into a mountain is carried through to the far side as a ⛰️ tunnel option; tunnels longer than 400 cost extra (a 1,500 one about twice a normal road). Towns from before maps existed stay on the classic flat forest.
 - **Scanning:** what a code is for decides the reward. Wi-Fi codes give power and coins, contact cards bring families, product barcodes bring goods, and restaurant menus, parking meters, museums and social links each have their own flavor. The exact contents of a code decide the amounts and the rare drops, so the same sticker gives every player the same reward. Each code counts once per town, and URLs ignore `?query` strings so one restaurant's 30 table codes count as one.
 - **Building:** empty lots don't build themselves. At the pace lots used to develop, the town adds whatever demand calls for to the bag (`City.plots`), never more than there are empty lots, and the player places each one by tapping an empty lot or from 🎒 Items ("Place them all for me" scatters them at random). Any finished building, special or station can be moved later for free: 🚚 Move or swap in its sheet, then tap an empty lot to move it there or another building to swap the two (levels and stored 💰/🧱 go along).
 - **Rare drops:** parks, fountains, schools, clinics, fire stations, libraries, a Sky Tower, a stadium and a Ferris wheel. Place them on an empty lot, or on top of a home, shop or factory to replace it, to raise ✨ appeal, which makes the town grow faster. A placed special can go back in the bag at any time, or be sold (from its sheet or the bag) for a few minutes of 💰 income and a little 🧱, more for rarer ones.
@@ -100,7 +100,8 @@ sandbox.html + js/main.js    the original editor/driving/AI sandbox (hidden extr
 the player's pick is saved in the road graph. A pending choice waits (even offline) until the player picks.
 Once the town has blocks, some options are 🏘️ roads inside town joining two existing roads; they may pave over
 empty lots (never built ones), so that option also depends on which lots are built. Paved lots keep their place in the
-save's lot list, and rebuilding the roads in order paves the same ones.
+save's lot list, and rebuilding the roads in order paves the same ones. An outward road that would end inside a
+mountain is carried on to the far side (`Terrain.throughRock()`), and `City.roadOptionCost()` prices long tunnels higher.
 Its geometry, and the terrain from the town's map type and seed, use only `+ - * /`, `sqrt` and `floor`, which give identical results on every device,
 so a town rebuilt from a share code matches on any phone. Share codes also carry the road graph itself,
 so future changes to the growth algorithm won't break old links.

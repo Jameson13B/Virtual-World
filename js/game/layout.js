@@ -163,7 +163,10 @@ class CityLayout {
       }
       const dir = normalize(add(base, scale(perpendicular(base), (rng() - 0.5) * jitter)));
       const len = 380 + rng() * 260;
-      const target = new Point(Math.round(a.x + dir.x * len), Math.round(a.y + dir.y * len));
+      let target = new Point(Math.round(a.x + dir.x * len), Math.round(a.y + dir.y * len));
+      // A road heading into a mountain tunnels through to the far side.
+      const out = this.terrain.throughRock(a, target);
+      if (out) target = new Point(out.x, out.y);
 
       // Occasionally join up with a nearby junction to form blocks and loops.
       let end = target, snapped = false;
@@ -176,9 +179,9 @@ class CityLayout {
       // Options must be clearly different roads, not the same one twice.
       const mid = average(a, end);
       if (options.some((o) => distance(average(o.a, o.b), mid) < 260)) continue;
-      options.push({ a, b: end, inside: false, lots: this.previewLots(a, end) });
+      options.push({ a, b: end, inside: false, tunnel: this.terrain.tunnelLength(a, end), lots: this.previewLots(a, end) });
     }
-    for (const o of inner) options.push({ a: o.a, b: o.b, inside: true, lots: this.previewLots(o.a, o.b) });
+    for (const o of inner) options.push({ a: o.a, b: o.b, inside: true, tunnel: this.terrain.tunnelLength(o.a, o.b), lots: this.previewLots(o.a, o.b) });
     return options;
   }
 

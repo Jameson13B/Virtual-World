@@ -16,7 +16,7 @@ const SHORE = 0.05;
 const ROCK = 0.62;
 const SNOW = 0.84;
 const BRIDGE_MAX = 600; // most water a road can cross (rivers are up to ~630 wide)
-const TUNNEL_MAX = 400; // most rock a road can tunnel through
+const TUNNEL_MAX = 1500; // most rock a road can tunnel through
 
 // `sea`: sandy beaches instead of grassy banks. "classic" is the flat forest
 // every town had before map types; old saves keep it, so it isn't offered.
@@ -266,6 +266,16 @@ class Terrain {
   roadFits(a, b) {
     if (this.flat) return true;
     if (!this.buildable(a.x, a.y) || !this.buildable(b.x, b.y)) return false;
+    const { wet, rock } = this.#crossing(a, b);
+    return wet <= BRIDGE_MAX && rock <= TUNNEL_MAX;
+  }
+
+  // How much of a road from a to b runs through rock.
+  tunnelLength(a, b) {
+    return this.flat ? 0 : this.#crossing(a, b).rock;
+  }
+
+  #crossing(a, b) {
     const len = distance(a, b);
     const n = Math.max(2, Math.ceil(len / 25));
     let wet = 0, rock = 0;
@@ -275,7 +285,26 @@ class Terrain {
       if (h < 0) wet += len / n;
       else if (h >= ROCK) rock += len / n;
     }
-    return wet <= BRIDGE_MAX && rock <= TUNNEL_MAX;
+    return { wet, rock };
+  }
+
+  // A road from a that would end at b inside a mountain, carried on along the
+  // same line to buildable ground on the far side. Null if b isn't in rock or
+  // the far side is too far.
+  throughRock(a, b) {
+    if (this.flat || this.height(b.x, b.y) < ROCK) return null;
+    const len = distance(a, b);
+    const dx = (b.x - a.x) / len, dy = (b.y - a.y) / len;
+    for (let d = 25; d <= TUNNEL_MAX; d += 25) {
+      const h = this.height(b.x + dx * d, b.y + dy * d);
+      if (h < 0) return null;
+      if (h < ROCK) {
+        // a little past the rock, so the road ends on solid ground
+        const e = d + 120;
+        return { x: Math.round(b.x + dx * e), y: Math.round(b.y + dy * e) };
+      }
+    }
+    return null;
   }
 
   // Whether a building lot (a 4-point polygon) sits on buildable land.

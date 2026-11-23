@@ -6,7 +6,7 @@
 const $ = (sel) => document.querySelector(sel);
 const SAVE_KEY = "vw.city";
 const PREFS_KEY = "vw.gamePrefs";
-const VERSION = "0.16.2";
+const VERSION = "0.16.3";
 
 const canvas = $("#cityCanvas");
 const ctx = canvas.getContext("2d");
@@ -1107,16 +1107,18 @@ function renderRoadBanner() {
   const opts = city.roadChoice || [];
   $("#roadOptions").innerHTML = opts.map((o, i) =>
     "<button data-road='" + i + "' class='road-opt" + (ui.roadPick === i ? " on" : "") + "'><b>" + (i + 1) + "</b>" +
-    "<span>" + (o.inside ? "🏘️ In town" : "🌲 New area") + " · " + o.lots + " lots</span></button>").join("");
+    "<span>" + (o.tunnel ? "⛰️ Tunnel" : o.inside ? "🏘️ In town" : "🌲 New area") + " · " + o.lots + " lots" +
+    (city.roadOptionCost(o) > city.roadCost() ? " · " + city.roadOptionCost(o) + " 🧱" : "") + "</span></button>").join("");
   $("#roadOptions").querySelectorAll("[data-road]").forEach((btn) =>
     btn.addEventListener("click", () => startRoadPick(+btn.dataset.road)));
-  $("#roadHint").textContent = "Each road costs the same";
+  $("#roadHint").textContent = opts.some((o) => city.roadOptionCost(o) > city.roadCost()) ? "Long tunnels cost more" : "Each road costs the same";
   $("#roadBanner").hidden = false;
   updateRoadBuild();
 }
 
 function updateRoadBuild() {
-  const cost = city.roadCost(), afford = city.materials >= cost;
+  const picked = city.roadChoice?.[ui.roadPick];
+  const cost = picked ? city.roadOptionCost(picked) : city.roadCost(), afford = city.materials >= cost;
   const build = $("#roadBuild");
   build.disabled = ui.roadPick < 0 || !afford;
   build.textContent = !afford ? "Need " + cost + " 🧱" : ui.roadPick < 0 ? "Pick a road" : "Build road " + (ui.roadPick + 1) + " · " + cost + " 🧱";

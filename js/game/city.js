@@ -492,6 +492,13 @@ class City {
     return Math.round(20 + 12 * Math.pow(this.roadCount - 1, 1.4));
   }
 
+  // What an offered road costs: the usual price, plus more for every bit of
+  // tunnel past the first 400 (a 1500 tunnel costs about twice as much).
+  roadOptionCost(o) {
+    const extra = Math.max(0, (o?.tunnel || 0) - 400) / 1000;
+    return Math.round(this.roadCost() * (1 + extra));
+  }
+
   // How much scans and the daily gift are multiplied by. Tied to the road cost
   // so a typical scan stays worth about a third of a road at any town size.
   rewardScale() {
@@ -541,7 +548,7 @@ class City {
     } else if (!this.roadChoice && this.materials >= this.roadCost()) {
       const options = this.layout.roadOptions(ROAD_CHOICES[Math.min(this.tierReached, ROAD_CHOICES.length - 1)]);
       if (options.length) {
-        this.roadChoice = options.map((o) => ({ a: { x: o.a.x, y: o.a.y }, b: { x: o.b.x, y: o.b.y }, lots: o.lots.length, inside: o.inside }));
+        this.roadChoice = options.map((o) => ({ a: { x: o.a.x, y: o.a.y }, b: { x: o.b.x, y: o.b.y }, lots: o.lots.length, inside: o.inside, tunnel: Math.round(o.tunnel) }));
         this.version++;
         events.push({ type: "roadChoice" });
       }
@@ -659,10 +666,10 @@ class City {
   }
 
   // ---- player actions -----------------------------------------------------
-  // Builds the i-th offered road. Every option costs the same.
+  // Builds the i-th offered road. Long tunnels cost more than other roads.
   chooseRoad(i) {
     const o = this.roadChoice?.[i];
-    if (!o || this.roadJob || this.materials < this.roadCost()) return false;
+    if (!o || this.roadJob || this.materials < this.roadOptionCost(o)) return false;
     // Something was built in the way of a road inside town since it was
     // offered: offer new roads instead.
     if (this.layout.lotsInWay(o.a, o.b).some((l) => l.kind || l.building > 0)) {
@@ -670,7 +677,7 @@ class City {
       this.version++;
       return false;
     }
-    this.materials -= this.roadCost();
+    this.materials -= this.roadOptionCost(o);
     this.roadJob = { a: o.a, b: o.b, t: 0, duration: this.roadDuration() };
     this.roadChoice = null;
     this.version++;

@@ -6,6 +6,12 @@
 
 const CHANGELOG = [
   {
+    version: "0.16.3",
+    notes: [
+      "⛰️ Roads can tunnel right through mountains now: a road heading into the rock comes out on the far side, through up to 1,500 of rock (it was 400). Look for ⛰️ Tunnel in your road choices. Tunnels longer than 400 cost extra 🧱, up to about twice a normal road",
+    ],
+  },
+  {
     version: "0.16.2",
     notes: [
       "🚦 Traffic lights follow the traffic: green stays with the busier side until its queue has gone through, turns quickly when that side empties, and never leaves anyone on red for more than about 25 s. Cars on green don't slow for the line, and queues pull away faster",
